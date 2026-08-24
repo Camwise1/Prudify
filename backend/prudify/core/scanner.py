@@ -32,10 +32,24 @@ _IGNORED_NAMES = {"sample", "sample.mp3", "trailer"}
 
 
 def natural_key(text: str) -> tuple:
-    """Sort "Part 2" before "Part 10"."""
-    return tuple(
-        int(part) if part.isdigit() else part.lower() for part in _NUMERIC.split(text) if part
-    )
+    """Sort "Part 2" before "Part 10".
+
+    Every element is the same shape -- ``(kind, number, text)`` -- so sorting
+    never compares an int against a str. The naive version of this function
+    emits a bare int for digit runs and a bare str for everything else, which
+    raises TypeError the moment one name starts with a digit and another does
+    not ("01 - Chapter.mp3" beside "Intro.mp3"). ``kind`` sorts numbers ahead
+    of text at the same position.
+    """
+    key: list[tuple[int, int, str]] = []
+    for part in _NUMERIC.split(text):
+        if not part:
+            continue
+        if part.isdigit():
+            key.append((0, int(part), ""))
+        else:
+            key.append((1, 0, part.lower()))
+    return tuple(key)
 
 
 @dataclass(slots=True)

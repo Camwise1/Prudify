@@ -38,6 +38,43 @@ def test_natural_sort_orders_numerically():
     ]
 
 
+def test_natural_sort_mixes_numeric_and_text_names():
+    """Regression: a folder holding both digit-led and letter-led names.
+
+    The first implementation returned a bare int for digit runs and a bare
+    str otherwise, so this raised
+    "TypeError: '<' not supported between instances of 'int' and 'str'".
+    Real libraries hit it constantly -- an "Intro.mp3" beside "01 - ...".
+    """
+    names = [
+        "Intro.mp3",
+        "01 - Chapter.mp3",
+        "10 - Chapter.mp3",
+        "2 - Chapter.mp3",
+        "Outro.mp3",
+        "Prologue.mp3",
+    ]
+    assert sorted(names, key=scanner.natural_key) == [
+        "01 - Chapter.mp3",
+        "2 - Chapter.mp3",
+        "10 - Chapter.mp3",
+        "Intro.mp3",
+        "Outro.mp3",
+        "Prologue.mp3",
+    ]
+
+
+def test_natural_sort_handles_awkward_names():
+    """No comparison should ever raise, whatever the names look like."""
+    names = [
+        "", "1", "a", "1a", "a1", "1.mp3", ".mp3", "007 Bond.m4b",
+        "Book - 2 - Part 10.m4b", "Book - 2 - Part 9.m4b", "ÜBER.mp3",
+    ]
+    assert len(sorted(names, key=scanner.natural_key)) == len(names)
+    ordered = sorted(["Book - 2 - Part 10.m4b", "Book - 2 - Part 9.m4b"], key=scanner.natural_key)
+    assert ordered == ["Book - 2 - Part 9.m4b", "Book - 2 - Part 10.m4b"]
+
+
 def test_finds_every_folder_containing_audio(library):
     books = {book.title: book for book in scanner.scan_library(library)}
     assert set(books) == {"Dead World", "Columbus Day", "Book 1", "Preview", "Loose Book"}

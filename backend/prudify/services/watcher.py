@@ -188,9 +188,23 @@ class LibraryWatcher:
                 log.info("Auto-queued %d book(s)", queued)
                 bus.publish("queue.auto_enqueued", {"count": queued})
 
+    def _scan_and_queue_safe(self, library_id: str | None) -> None:
+        """Thread entry point: never let an exception escape.
+
+        An unhandled error here kills the thread and prints a traceback to the
+        container log, while the UI shows nothing at all -- the user clicks
+        "Scan libraries" and is left guessing. Catch it, log it, and publish
+        it so the failure is visible in the app.
+        """
+        try:
+            self._scan_and_queue(library_id)
+        except Exception as exc:  # noqa: BLE001 - a background thread must not die
+            log.exception("Library scan failed")
+            bus.publish("library.scan_failed", {"error": f"{type(exc).__name__}: {exc}"})
+
     def trigger_scan(self) -> None:
         threading.Thread(
-            target=self._scan_and_queue, args=(None,), name="prudify-scan", daemon=True
+            target=self._scan_and_queue_safe, args=(None,), name="prudify-scan", daemon=True
         ).start()
 
 

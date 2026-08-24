@@ -130,11 +130,30 @@ def scan_library(session: Session, config: Config, library: LibrarySettings) -> 
 
 
 def scan_all(session: Session, config: Config) -> list[dict]:
+    """Scan every enabled library, isolating failures to one library.
+
+    A library on an unreachable share, or one that trips a bug, must not stop
+    the others from being scanned -- and must not take down the caller's
+    thread. Failures are recorded in the returned summary so the UI can show
+    which library is unhappy rather than silently reporting nothing.
+    """
     results = []
     for library in config.libraries:
         if not library.enabled:
             continue
-        results.append(scan_library(session, config, library))
+        try:
+            results.append(scan_library(session, config, library))
+        except Exception as exc:  # noqa: BLE001 - one bad library must not stop the rest
+            log.exception("Scan failed for library %s", library.name)
+            session.rollback()
+            results.append(
+                {
+                    "library": library.name,
+                    "library_id": library.id,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "total": 0,
+                }
+            )
     bus.publish("library.scan_complete", {"results": results})
     return results
 
