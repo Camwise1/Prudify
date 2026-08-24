@@ -72,6 +72,7 @@ def clean(
     wordlist: str = typer.Option(None, help="Wordlist name (strict, moderate, ...)."),
     model: str = typer.Option(None, help="Whisper model, e.g. base.en or small.en."),
     mode: str = typer.Option(None, help="mute, beep, or cut."),
+    pad_before: int = typer.Option(None, help="Milliseconds of padding before each hit."),
     pad_after: int = typer.Option(None, help="Milliseconds of padding after each hit."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Report matches without writing."),
     verbose: bool = typer.Option(False, "-v", "--verbose"),
@@ -87,6 +88,8 @@ def clean(
         config.transcription.model = model
     if mode:
         config.output.mode = mode  # type: ignore[assignment]
+    if pad_before is not None:
+        config.filtering.pad_before_ms = pad_before
     if pad_after is not None:
         config.filtering.pad_after_ms = pad_after
     config.processing.dry_run = dry_run

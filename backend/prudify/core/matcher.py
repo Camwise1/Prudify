@@ -341,19 +341,51 @@ def build_intervals(
     pad_after_ms: int = 100,
     merge_gap_ms: int = 250,
     duration: float = 0.0,
+    words: Sequence[Word] | None = None,
+    neighbour_guard_ms: int = 30,
 ) -> list[tuple[float, float]]:
-    """Pad each match, then merge anything that overlaps or nearly touches."""
+    """Pad each match, then merge anything that overlaps or nearly touches.
+
+    When ``words`` is supplied, padding is not allowed to run into the
+    neighbouring words. Padding exists to cover the slop in Whisper's word
+    boundaries, but a fixed amount is too blunt on its own: where the next
+    word follows immediately, 100 ms of trailing pad audibly clips its onset,
+    which listeners hear as the silence "bleeding" into the surrounding
+    speech. Each interval is therefore clamped to stop ``neighbour_guard_ms``
+    short of the adjacent word, while never trimming inside the matched word
+    itself -- the profanity is always fully covered.
+    """
     if not matches:
         return []
 
     pad_before = pad_before_ms / 1000.0
     pad_after = pad_after_ms / 1000.0
     gap = merge_gap_ms / 1000.0
+    guard = max(0, neighbour_guard_ms) / 1000.0
 
     raw = []
     for match in matches:
-        start = max(0.0, match.start - pad_before)
+        start = match.start - pad_before
         end = match.end + pad_after
+
+        if words:
+            # A phrase rule matches several words; the neighbours sit either
+            # side of the whole span.
+            span = max(1, len(match.text.split()))
+            previous_index = match.word_index - 1
+            following_index = match.word_index + span
+
+            if 0 <= previous_index < len(words):
+                # Never start before the previous word has finished speaking,
+                # but never clip into the match itself either.
+                floor = words[previous_index].end + guard
+                start = max(start, min(floor, match.start))
+
+            if 0 <= following_index < len(words):
+                ceiling = words[following_index].start - guard
+                end = min(end, max(ceiling, match.end))
+
+        start = max(0.0, start)
         if duration:
             end = min(end, duration)
         if end > start:
@@ -376,6 +408,7 @@ def analyse(
     pad_after_ms: int = 100,
     merge_gap_ms: int = 250,
     duration: float = 0.0,
+    neighbour_guard_ms: int = 30,
 ) -> MatchReport:
     matches = matcher.find(words)
     intervals = build_intervals(
@@ -384,6 +417,8 @@ def analyse(
         pad_after_ms=pad_after_ms,
         merge_gap_ms=merge_gap_ms,
         duration=duration,
+        words=words,
+        neighbour_guard_ms=neighbour_guard_ms,
     )
     return MatchReport(matches=matches, intervals=intervals, word_count=len(words))
 

@@ -160,3 +160,55 @@ def test_report_counts_by_word(strict):
     report = M.analyse(words("fuck fuck fucking cunt"), strict)
     assert report.counts_by_word == {"fuck": 2, "cunt": 1, "fucking": 1}
     assert report.word_count == 4
+
+
+class TestNeighbourGuard:
+    """Padding must never bleed into the words either side of a hit."""
+
+    @staticmethod
+    def _words():
+        # "pretty much fucked. That's my" -- the next word starts 40ms later,
+        # so a 100ms trailing pad would clip its onset.
+        return [
+            Word(0.00, 0.30, "pretty"),
+            Word(0.30, 0.60, "much"),
+            Word(0.60, 1.00, "fucked"),
+            Word(1.04, 1.40, "That's"),
+            Word(1.40, 1.60, "my"),
+        ]
+
+    @staticmethod
+    def _match():
+        return [M.Match(start=0.60, end=1.00, text="fucked", rule="fucked", word_index=2)]
+
+    def test_trailing_pad_stops_short_of_the_next_word(self):
+        intervals = M.build_intervals(
+            self._match(), pad_after_ms=100, words=self._words(), neighbour_guard_ms=30
+        )
+        assert intervals[0][1] <= 1.04
+        # ...but the whole word is still covered.
+        assert intervals[0][1] >= 1.00
+
+    def test_leading_pad_stops_short_of_the_previous_word(self):
+        intervals = M.build_intervals(
+            self._match(), pad_before_ms=200, pad_after_ms=0,
+            words=self._words(), neighbour_guard_ms=30,
+        )
+        assert intervals[0][0] >= 0.60 - 1e-9
+        assert intervals[0][0] <= 0.60
+
+    def test_full_padding_kept_when_there_is_room(self):
+        words = [Word(0.60, 1.00, "fucked"), Word(2.00, 2.40, "later")]
+        match = [M.Match(start=0.60, end=1.00, text="fucked", rule="fucked", word_index=0)]
+        intervals = M.build_intervals(match, pad_after_ms=100, words=words)
+        assert intervals[0][1] == pytest.approx(1.10)
+
+    def test_guard_of_zero_allows_padding_up_to_the_neighbour(self):
+        intervals = M.build_intervals(
+            self._match(), pad_after_ms=100, words=self._words(), neighbour_guard_ms=0
+        )
+        assert intervals[0][1] == pytest.approx(1.04)
+
+    def test_without_words_behaviour_is_unchanged(self):
+        intervals = M.build_intervals(self._match(), pad_after_ms=100)
+        assert intervals[0][1] == pytest.approx(1.10)

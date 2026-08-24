@@ -139,6 +139,10 @@ class FilterSettings(BaseModel):
     pad_after_ms: int = Field(default=100, ge=0, le=5000)
     # Two hits closer together than this are merged into one interval.
     merge_gap_ms: int = Field(default=250, ge=0, le=5000)
+    # Padding stops this far short of the neighbouring word, so a generous
+    # pad cannot clip the speech either side. 0 disables the clamp and lets
+    # padding run wherever it likes.
+    neighbour_guard_ms: int = Field(default=30, ge=0, le=1000)
     # Discard matches whose word-level probability is below this threshold.
     min_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 

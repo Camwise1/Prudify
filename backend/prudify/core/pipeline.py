@@ -224,6 +224,7 @@ def clean_part(
         pad_before_ms=config.filtering.pad_before_ms,
         pad_after_ms=config.filtering.pad_after_ms,
         merge_gap_ms=config.filtering.merge_gap_ms,
+        neighbour_guard_ms=config.filtering.neighbour_guard_ms,
         duration=info.duration,
     )
     result.match_count = len(report_data.matches)
@@ -349,5 +350,6 @@ def preview_part(
         pad_before_ms=config.filtering.pad_before_ms,
         pad_after_ms=config.filtering.pad_after_ms,
         merge_gap_ms=config.filtering.merge_gap_ms,
+        neighbour_guard_ms=config.filtering.neighbour_guard_ms,
         duration=transcript.duration,
     )
