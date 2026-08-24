@@ -14,7 +14,7 @@
 param(
     [string]$Root       = "E:\prudify",
     [string]$Python     = "E:\Apps\Python311\python.exe",
-    [string]$FFmpegDir  = "E:\Apps\FFmpeg\bin",
+    [string]$FFmpegDir  = "E:\Apps\FFmpeg",
     [int]   $Threads    = 6
 )
 
@@ -32,22 +32,37 @@ $env:OMP_NUM_THREADS  = "$Threads"
 New-Item -ItemType Directory -Force -Path $env:TMP, $env:PRUDIFY_DATA_DIR, $env:HF_HOME |
     Out-Null
 
-# Locate ffmpeg. Some builds put the binaries in \bin, others at the top level.
-$ffmpeg  = Join-Path $FFmpegDir "ffmpeg.exe"
-$ffprobe = Join-Path $FFmpegDir "ffprobe.exe"
-if (-not (Test-Path $ffmpeg)) {
-    $parent = Split-Path $FFmpegDir -Parent
-    if (Test-Path (Join-Path $parent "ffmpeg.exe")) {
-        $ffmpeg  = Join-Path $parent "ffmpeg.exe"
-        $ffprobe = Join-Path $parent "ffprobe.exe"
-    }
+# Locate ffmpeg. The official Windows builds unzip to a versioned folder --
+# FFmpeg\ffmpeg-9.0-full_build\bin\ffmpeg.exe -- so the given path is often a
+# level or two above the actual binary. Try the obvious spots, then search,
+# then fall back to whatever is on PATH.
+$ffmpeg = $null
+foreach ($candidate in @(
+    (Join-Path $FFmpegDir "ffmpeg.exe"),
+    (Join-Path $FFmpegDir "bin\ffmpeg.exe"),
+    (Join-Path (Split-Path $FFmpegDir -Parent) "ffmpeg.exe")
+)) {
+    if (Test-Path $candidate) { $ffmpeg = $candidate; break }
 }
-if (Test-Path $ffmpeg) {
+
+if (-not $ffmpeg -and (Test-Path $FFmpegDir)) {
+    $found = Get-ChildItem $FFmpegDir -Recurse -Filter ffmpeg.exe -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($found) { $ffmpeg = $found.FullName }
+}
+
+if (-not $ffmpeg) {
+    $onPath = Get-Command ffmpeg.exe -ErrorAction SilentlyContinue
+    if ($onPath) { $ffmpeg = $onPath.Source }
+}
+
+if ($ffmpeg) { $ffprobe = Join-Path (Split-Path $ffmpeg -Parent) "ffprobe.exe" }
+if ($ffmpeg -and (Test-Path $ffmpeg)) {
     $env:PRUDIFY_FFMPEG  = $ffmpeg
     $env:PRUDIFY_FFPROBE = $ffprobe
     $env:PATH = "$(Split-Path $ffmpeg -Parent);$env:PATH"
 } else {
-    Write-Warning "ffmpeg not found under $FFmpegDir -- pass -FFmpegDir <path>"
+    Write-Warning "ffmpeg not found under $FFmpegDir, and not on PATH. Pass -FFmpegDir <folder containing ffmpeg.exe>"
 }
 
 # Activate the virtual environment, creating it on first run.
