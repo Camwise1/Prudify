@@ -59,11 +59,27 @@ cleaned files are readable by your other containers.
 pip install "prudify[whisper]"
 ```
 
+**On Windows**, PowerShell blocks unsigned scripts by default, so activating a
+virtual environment fails with "running scripts is disabled on this system".
+Allow your own local scripts once, per user, no administrator rights needed:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+```
+
+A script that arrived over the network also needs `Unblock-File <path>`, since
+Windows marks downloaded files and `RemoteSigned` refuses them.
+
 Without the `[whisper]` extra you get the server and the UI but no
 transcription backend — useful for trying it out, not for actually cleaning
 anything.
 
 ### ffmpeg
+
+Any version from 4.x onwards works. Prudify passes its filter graph in a file
+to stay under the Windows command-line length limit, and the option for that
+was renamed in ffmpeg 7.0 and removed in 9.0 -- the correct spelling is chosen
+at runtime from the binary you have, so old and new both work.
 
 | Platform | Command |
 | --- | --- |
