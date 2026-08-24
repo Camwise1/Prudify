@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 # How many books to process between commits during a scan. Small enough
 # that SQLite's single write lock is released regularly, large enough that
 # we are not paying a commit per book.
-_SCAN_COMMIT_EVERY = 25
+_SCAN_COMMIT_EVERY = 25  # books per transaction; each is now pure DB work
 
 
 def destination_for(library: LibrarySettings, config: Config, relative_path: str) -> Path:
@@ -40,7 +40,28 @@ def scan_library(session: Session, config: Config, library: LibrarySettings) -> 
     updated = 0
     scanned = 0
 
-    for discovered in scanner.iter_library(library):
+    # Do every filesystem touch before opening a transaction. Walking the
+    # library calls ffprobe per book and stats each output file, all of it
+    # over the network share; doing that while holding SQLite's write lock is
+    # what starved the queue worker into "database is locked".
+    discovered_books = list(scanner.iter_library(library))
+    destinations: dict[str, tuple[Path, bool, int]] = {}
+    for found in discovered_books:
+        for found_part in found.parts:
+            destination = destination_for(library, config, found_part.relative_path)
+            try:
+                stat = destination.stat()
+                destinations[found_part.relative_path] = (destination, True, stat.st_size)
+            except OSError:
+                destinations[found_part.relative_path] = (destination, False, 0)
+
+    log.info(
+        "%s: %d book(s) on disk, writing to the database",
+        library.name,
+        len(discovered_books),
+    )
+
+    for discovered in discovered_books:
         seen_keys.add(discovered.key)
         book = session.get(Book, discovered.key)
         is_new = book is None
@@ -77,10 +98,10 @@ def scan_library(session: Session, config: Config, library: LibrarySettings) -> 
             part.path = str(discovered_part.path)
             part.extension = discovered_part.extension
             part.size_bytes = discovered_part.size_bytes
-            destination = destination_for(library, config, discovered_part.relative_path)
+            destination, dest_exists, dest_size = destinations[discovered_part.relative_path]
             part.destination = str(destination)
 
-            if destination.exists() and destination.stat().st_size > 0:
+            if dest_exists and dest_size > 0:
                 part.status = BookStatus.CLEANED.value
                 any_clean = True
             else:
