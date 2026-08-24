@@ -1,8 +1,10 @@
 services:
   prudify:
     image: ${PRUDIFY_IMAGE:-ghcr.io/YOURNAME/prudify:latest}
-    # To build from a checkout instead of pulling:
-    # build: .
+    # Build from this checkout when the image is not already present locally.
+    # Remove this line once you are pulling a published image and would rather
+    # a missing tag be an error than a silent 20-minute rebuild.
+    build: .
     container_name: prudify
     restart: unless-stopped
     ports:
