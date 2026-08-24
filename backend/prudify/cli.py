@@ -21,7 +21,7 @@ from . import __version__
 from .config import config_path, load_config, save_config
 from .core import matcher as matcher_mod
 from .core import scanner
-from .core.audio import probe
+from .core.audio import FFmpegError, probe
 from .core.pipeline import clean_part
 from .logging_setup import configure_logging
 
@@ -120,13 +120,27 @@ def clean(
                 description=(message or stage)[:40],
             )
 
-        result = clean_part(
-            source=source,
-            destination=destination,
-            config=config,
-            work_dir=work_dir,
-            progress=on_progress,
-        )
+        try:
+            result = clean_part(
+                source=source,
+                destination=destination,
+                config=config,
+                work_dir=work_dir,
+                progress=on_progress,
+            )
+        except FFmpegError as exc:
+            # A wall of Python frames helps nobody diagnose an ffmpeg failure;
+            # what matters is ffmpeg's own message.
+            progress_ui.stop()
+            console.print(f"[bold red]ffmpeg failed[/] (exit code {exc.returncode})")
+            if exc.stderr:
+                console.print(exc.stderr)
+            else:
+                console.print(
+                    "[yellow]ffmpeg produced no output before exiting.[/] "
+                    "Re-run with -v to see the exact command."
+                )
+            raise typer.Exit(code=1) from None
 
     if not result.ok:
         console.print(f"[bold red]Failed:[/] {result.reason}")

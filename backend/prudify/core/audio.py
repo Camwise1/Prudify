@@ -628,9 +628,19 @@ def run_ffmpeg(
 
     if process.returncode != 0:
         tail = "\n".join("".join(stderr_tail).strip().splitlines()[-25:])
-        raise FFmpegError(
-            f"ffmpeg exited with code {process.returncode}", tail, process.returncode
-        )
+        # Put the tail in the message too. It was previously only on the
+        # exception's .stderr attribute, which nothing printed -- so a failed
+        # render surfaced as a bare exit code and nothing to diagnose it with.
+        summary = f"ffmpeg exited with code {process.returncode}"
+        if tail:
+            summary = f"{summary}\n\nffmpeg said:\n{tail}"
+        else:
+            summary = (
+                f"{summary} (no output captured -- the process most likely "
+                f"crashed rather than exiting with an error)\n"
+                f"command: {' '.join(full_cmd)}"
+            )
+        raise FFmpegError(summary, tail, process.returncode)
 
 
 def validate_output(
