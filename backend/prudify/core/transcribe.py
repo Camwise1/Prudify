@@ -371,6 +371,28 @@ def get_transcriber(settings: TranscriptionSettings) -> Transcriber:
 # --------------------------------------------------------------------------
 
 
+def _usable_wav(path: Path, expected_duration: float) -> bool:
+    """Is a cached WAV complete enough to reuse instead of re-extracting?
+
+    Extraction output is cached so an interrupted run resumes rather than
+    starting over. Testing only ``exists()`` was a trap: a run killed partway
+    through extraction leaves a truncated -- often zero-byte -- file behind,
+    extraction is then skipped forever, and every later attempt dies in
+    ffprobe with an error that says nothing about the real cause. Verify the
+    file actually decodes, and that it covers the expected running time.
+    """
+    if not path.exists() or path.stat().st_size < 1024:
+        return False
+    try:
+        found = audio_mod.probe(path).duration
+    except Exception:  # noqa: BLE001 - anything unreadable means re-extract
+        return False
+    if found <= 0:
+        return False
+    # Allow a little slack: container rounding, not a truncated file.
+    return expected_duration <= 0 or found >= expected_duration * 0.98
+
+
 def transcribe_file(
     source: Path,
     settings: TranscriptionSettings,
@@ -389,7 +411,8 @@ def transcribe_file(
 
     if settings.chunk_minutes <= 0:
         wav = work_dir / "audio.wav"
-        if not wav.exists():
+        if not _usable_wav(wav, info.duration):
+            wav.unlink(missing_ok=True)
             audio_mod.extract_pcm(
                 source,
                 wav,

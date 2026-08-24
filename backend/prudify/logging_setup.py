@@ -112,6 +112,22 @@ def configure_logging(level: str = "INFO", log_file: Path | None = None) -> None
     # These are chatty and rarely useful at INFO.
     logging.getLogger("watchdog").setLevel(logging.WARNING)
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
+    # Third-party DEBUG output is not what anyone means by "verbose". Turning
+    # it on buries our own logs: the HTTP stack alone prints every header of
+    # every request while a Whisper model downloads, which is hundreds of
+    # lines that say nothing about what Prudify is doing. Pin these at
+    # WARNING regardless of the level we run at.
+    for noisy in (
+        "httpx",
+        "httpcore",
+        "urllib3",
+        "filelock",
+        "huggingface_hub",
+        "asyncio",
+        "matplotlib",
+    ):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     logging.getLogger("multipart").setLevel(logging.WARNING)
 
 
