@@ -1,0 +1,1 @@
+"""Prudify test suite."""

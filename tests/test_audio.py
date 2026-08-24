@@ -1,0 +1,143 @@
+"""Filter-graph construction and ffmpeg integration."""
+
+from __future__ import annotations
+
+import pytest
+
+from prudify.core import audio as audio_mod
+from prudify.core.audio import Chapter
+
+from .conftest import needs_ffmpeg
+
+INTERVALS = [(10.0, 10.5), (30.0, 30.7)]
+
+
+class TestFilterGraph:
+    def test_empty_intervals_pass_through(self):
+        assert audio_mod.build_filter_graph([]) == "[0:a]anull[aout]"
+
+    def test_mute_graph_gates_each_interval(self):
+        graph = audio_mod.build_filter_graph(INTERVALS)
+        assert "between(t,10.000,10.500)" in graph
+        assert "between(t,30.000,30.700)" in graph
+        assert graph.startswith("[0:a]") and graph.endswith("[aout]")
+
+    def test_mute_batches_large_interval_counts(self):
+        many = [(i * 0.1, i * 0.1 + 0.05) for i in range(600)]
+        graph = audio_mod.build_filter_graph(many)
+        # Chaining mutes is safe: successive gates union together.
+        assert graph.count("volume=0:enable=") == 12
+
+    def test_beep_graph_needs_no_extra_input(self):
+        graph = audio_mod.build_filter_graph(INTERVALS, mode="beep")
+        assert "sine=frequency=" in graph
+        assert "[1:a]" not in graph
+
+    def test_beep_gate_is_inverted_for_the_tone(self):
+        graph = audio_mod.build_filter_graph(INTERVALS, mode="beep")
+        assert "volume=0:enable='not(" in graph
+        # amix must not halve the narration.
+        assert "normalize=0" in graph
+
+    def test_cut_graph_selects_the_complement(self):
+        graph = audio_mod.build_cut_graph(INTERVALS)
+        assert graph.startswith("[0:a]aselect='not(")
+        assert "asetpts" in graph
+
+
+class TestChapterShifting:
+    def test_chapters_move_back_by_removed_time(self):
+        chapters = [Chapter(0, 0.0, 20.0, "One"), Chapter(1, 20.0, 40.0, "Two")]
+        shifted = audio_mod.shift_chapters(chapters, [(5.0, 6.0)])
+        assert shifted[0].start == 0.0
+        assert shifted[0].end == pytest.approx(19.0)
+        assert shifted[1].start == pytest.approx(19.0)
+
+    def test_cut_inside_a_chapter_is_accounted_for(self):
+        chapters = [Chapter(0, 0.0, 20.0, "One")]
+        shifted = audio_mod.shift_chapters(chapters, [(10.0, 12.0), (15.0, 16.0)])
+        assert shifted[0].end == pytest.approx(17.0)
+
+    def test_no_cuts_leaves_chapters_alone(self):
+        chapters = [Chapter(0, 0.0, 20.0, "One")]
+        assert audio_mod.shift_chapters(chapters, [])[0].end == 20.0
+
+
+class TestCodecSelection:
+    @pytest.mark.parametrize(
+        "container,expected",
+        [(".m4b", "aac"), (".m4a", "aac"), (".mp3", "libmp3lame"), (".opus", "libopus")],
+    )
+    def test_codec_follows_container(self, container, expected):
+        assert audio_mod.choose_codec(container, "aac") == expected
+
+    def test_explicit_codec_wins(self):
+        assert audio_mod.choose_codec(".m4b", "aac", "libfdk_aac") == "libfdk_aac"
+
+    def test_bitrate_tracks_the_source(self):
+        info = audio_mod.MediaInfo(path=None, bit_rate=64000, channels=1)  # type: ignore[arg-type]
+        assert audio_mod.choose_bitrate(info) == "64k"
+
+    def test_bitrate_has_a_sane_default(self):
+        info = audio_mod.MediaInfo(path=None, bit_rate=0, channels=1)  # type: ignore[arg-type]
+        assert audio_mod.choose_bitrate(info) == "64k"
+
+
+class TestMetadata:
+    def test_ffmetadata_round_trip(self, tmp_path):
+        path = audio_mod.write_ffmetadata(
+            [Chapter(0, 0.0, 12.5, "Chapter; One")],
+            {"title": "A=B"},
+            tmp_path / "meta.ffmeta",
+        )
+        text = path.read_text(encoding="utf-8")
+        assert text.startswith(";FFMETADATA1")
+        assert "START=0" in text and "END=12500" in text
+        assert r"Chapter\; One" in text
+        assert r"A\=B" in text
+
+
+@needs_ffmpeg
+class TestProbe:
+    def test_reads_chapters_cover_and_tags(self, sample_m4b):
+        info = audio_mod.probe(sample_m4b)
+        assert info.duration == pytest.approx(60.0, abs=0.3)
+        assert info.chapter_count == 3
+        assert info.has_cover
+        assert info.tags["artist"] == "Test Author"
+        assert info.codec == "aac"
+        assert info.channels == 2
+
+    def test_chapter_titles_survive(self, sample_m4b):
+        titles = [chapter.title for chapter in audio_mod.probe(sample_m4b).chapters]
+        assert titles == ["Chapter One", "Chapter Two", "Chapter Three"]
+
+    def test_missing_file_raises(self, tmp_path):
+        with pytest.raises(audio_mod.FFmpegError):
+            audio_mod.probe(tmp_path / "nope.m4b")
+
+
+@needs_ffmpeg
+class TestValidation:
+    def test_accepts_a_faithful_copy(self, sample_m4b, tmp_path):
+        info = audio_mod.probe(sample_m4b)
+        destination = tmp_path / "copy.m4b"
+        audio_mod.render(sample_m4b, destination, info, [(10.0, 10.5)], work_dir=tmp_path / "w")
+        ok, problems = audio_mod.validate_output(info, destination)
+        assert ok, problems
+
+    def test_rejects_a_missing_output(self, sample_m4b, tmp_path):
+        info = audio_mod.probe(sample_m4b)
+        ok, problems = audio_mod.validate_output(info, tmp_path / "absent.m4b")
+        assert not ok and problems
+
+    def test_flags_lost_chapters(self, sample_m4b, tmp_path):
+        info = audio_mod.probe(sample_m4b)
+        destination = tmp_path / "nochap.m4b"
+        audio_mod.render(
+            sample_m4b, destination, info, [(10.0, 10.5)],
+            preserve_chapters=False, work_dir=tmp_path / "w",
+        )
+        ok, problems = audio_mod.validate_output(info, destination, expect_chapters=True)
+        assert not ok
+        assert any("Chapter" in problem for problem in problems)

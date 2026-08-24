@@ -1,0 +1,32 @@
+# Prudify allowlist (never silenced)
+#
+# Entries here win over every wordlist. This exists to defuse the classic
+# "Scunthorpe problem": innocent words that contain a profane substring, and
+# words Whisper commonly mishears. Same syntax as a wordlist.
+#
+# Note that Prudify matches whole tokens by default, so most of these are
+# only needed if you enable prefix (`*`) rules or fuzzy matching.
+
+scunthorpe
+penistone
+cockburn
+shitake
+shiitake
+assess
+assessment
+assassin
+assassins
+class
+classic
+bass
+pass
+passage
+grass
+mishit
+cockpit
+cocktail
+peacock
+shuttlecock
+titan
+titanic
+constitution

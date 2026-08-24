@@ -1,0 +1,55 @@
+# Prudify wordlist: moderate
+#
+# The strict list plus the next tier of strong profanity. Still excludes
+# mild words (damn, hell, crap) and slurs -- see the notes in README.md
+# about why slur lists are shipped separately.
+
+# --- strict tier ---
+fuck*
+motherfuck*
+mother fucker
+mother fuckers
+mother fucking
+cunt
+cunts
+cunting
+cunty
+
+# --- moderate tier ---
+shit
+shits
+shitty
+shitting
+shithead
+shitheads
+shitshow
+bullshit
+horseshit
+dipshit
+bastard
+bastards
+bitch
+bitches
+bitching
+bitchy
+son of a bitch
+sons of bitches
+whore
+whores
+slut
+sluts
+prick
+pricks
+twat
+twats
+wanker
+wankers
+asshole
+assholes
+arsehole
+arseholes
+douchebag
+douchebags
+goddamn
+goddamnit
+god damn

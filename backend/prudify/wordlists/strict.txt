@@ -1,0 +1,37 @@
+# Prudify wordlist: strict
+#
+# One entry per line. Lines beginning with '#' are comments.
+#
+#   word            matches that single token (case-insensitive)
+#   two words       matches consecutive tokens ("mother fucker")
+#   word*           prefix match ("fuck*" matches fucking, fucked, fucker)
+#   /regex/         raw regular expression matched against a single token
+#
+# This list is the "F-word and C-word only" set: the strongest two words and
+# their common inflections, nothing else. Milder profanity, slurs, and
+# blasphemy are left alone.
+
+fuck
+fucks
+fucked
+fucker
+fuckers
+fuckin
+fucking
+fuckings
+fuckup
+fuckups
+fucked-up
+clusterfuck
+motherfuck
+motherfucker
+motherfuckers
+motherfuckin
+motherfucking
+mother fucker
+mother fuckers
+mother fucking
+cunt
+cunts
+cunting
+cunty
