@@ -18,6 +18,11 @@ log = logging.getLogger(__name__)
 _engine: Engine | None = None
 _SessionFactory: sessionmaker[Session] | None = None
 
+# How long a blocked writer waits for the lock before giving up. Scans on a
+# slow network share can hold the write lock for a while, and failing after a
+# fraction of a second is never what we want.
+_BUSY_TIMEOUT_MS = 30_000
+
 
 def init_db(database_path: Path) -> Engine:
     """Create (or open) the database and apply WAL settings."""
@@ -38,6 +43,11 @@ def init_db(database_path: Path) -> Engine:
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.execute("PRAGMA foreign_keys=ON")
+        # The driver's `timeout` only arms the busy handler on connections it
+        # opens itself; setting the pragma makes the wait explicit and applies
+        # to every connection in the pool. Without it, a writer that collides
+        # with another writer fails instantly instead of waiting its turn.
+        cursor.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
         cursor.close()
 
     Base.metadata.create_all(engine)

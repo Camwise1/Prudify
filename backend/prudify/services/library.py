@@ -16,6 +16,11 @@ from .events import bus
 
 log = logging.getLogger(__name__)
 
+# How many books to process between commits during a scan. Small enough
+# that SQLite's single write lock is released regularly, large enough that
+# we are not paying a commit per book.
+_SCAN_COMMIT_EVERY = 25
+
 
 def destination_for(library: LibrarySettings, config: Config, relative_path: str) -> Path:
     container = config.output.container
@@ -33,6 +38,7 @@ def scan_library(session: Session, config: Config, library: LibrarySettings) -> 
     seen_keys: set[str] = set()
     added = 0
     updated = 0
+    scanned = 0
 
     for discovered in scanner.iter_library(library):
         seen_keys.add(discovered.key)
@@ -105,6 +111,15 @@ def scan_library(session: Session, config: Config, library: LibrarySettings) -> 
                 "library.book_added",
                 {"id": book.id, "title": book.title, "author": book.author},
             )
+
+        # Commit in batches. Scanning a large library means one ffprobe per
+        # book over the network, so a single transaction would hold SQLite's
+        # write lock for minutes and the queue worker would fail with
+        # "database is locked". Committing often keeps each write brief.
+        scanned += 1
+        if scanned % _SCAN_COMMIT_EVERY == 0:
+            session.commit()
+            log.debug("Scan checkpoint at %d book(s) in %s", scanned, library.name)
 
     # Anything not seen this pass has left the filesystem.
     stale = session.execute(

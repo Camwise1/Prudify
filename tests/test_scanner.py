@@ -20,6 +20,8 @@ def library(tmp_path) -> LibrarySettings:
         "Craig Alanson/Columbus Day/10 - Columbus Day.mp3",
         "Matt Dinniman/Dungeon Crawler Carl/Book 1/Carl.m4b",
         "Matt Dinniman/Dungeon Crawler Carl/cover.jpg",
+        "Samples/Preview/Preview.m4b",
+        # Files named "sample" are skipped wherever they appear.
         "Samples/Preview/sample.mp3",
         "Loose Book.m4b",
     ]:
@@ -91,7 +93,15 @@ def test_multipart_books_stay_together(library):
 
 def test_non_audio_files_are_ignored(library):
     books = {book.title: book for book in scanner.scan_library(library)}
-    assert all(not part.path.endswith(".jpg") for part in books["Book 1"].parts)
+    # part.path is a Path, so compare suffixes rather than calling endswith.
+    assert all(part.path.suffix != ".jpg" for part in books["Book 1"].parts)
+
+
+def test_sample_files_are_ignored(library):
+    books = {book.title: book for book in scanner.scan_library(library)}
+    names = {part.path.name for part in books["Preview"].parts}
+    assert "sample.mp3" not in names
+    assert names == {"Preview.m4b"}
 
 
 def test_author_inferred_from_path(library):
@@ -153,3 +163,54 @@ def test_missing_source_yields_nothing(tmp_path):
         name="gone", source_path=str(tmp_path / "nope"), output_path=str(tmp_path / "out")
     )
     assert scanner.scan_library(library) == []
+
+
+def test_flat_author_shelf_splits_into_separate_books(tmp_path):
+    """Regression: Author/*.m4b is many books, not one many-part book.
+
+    A real library had 32 loose M4Bs in one author folder. The scanner
+    reported a single 30 GB "book" with 32 parts, and cleaning that would
+    have concatenated unrelated novels into one output file.
+    """
+    source = tmp_path / "src"
+    for name in ["Aftermath.m4b", "Columbus Day.m4b", "SpecOps.m4b"]:
+        path = source / "Craig Alanson" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\0" * 2048)
+
+    library = LibrarySettings(
+        name="t", source_path=str(source), output_path=str(tmp_path / "clean")
+    )
+    books = list(scanner.scan_library(library))
+
+    assert len(books) == 3
+    assert {b.title for b in books} == {"Aftermath", "Columbus Day", "SpecOps"}
+    assert all(b.part_count == 1 for b in books)
+    assert all(b.author == "Craig Alanson" for b in books)
+    # Distinct keys, or they overwrite one another in the database.
+    assert len({b.key for b in books}) == 3
+
+
+def test_genuine_multipart_book_stays_whole(tmp_path):
+    source = tmp_path / "src"
+    for name in ["Kings - Part 1.m4b", "Kings - Part 2.m4b", "Kings - Part 3.m4b"]:
+        path = source / "Brandon Sanderson" / "The Way of Kings" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\0" * 2048)
+
+    library = LibrarySettings(
+        name="t", source_path=str(source), output_path=str(tmp_path / "clean")
+    )
+    books = list(scanner.scan_library(library))
+    assert len(books) == 1
+    assert books[0].part_count == 3
+
+
+def test_multipart_detection():
+    assert scanner._looks_multipart(["Book - Part 1", "Book - Part 2"])
+    assert scanner._looks_multipart(["Snow Crash CD01", "Snow Crash CD02"])
+    assert scanner._looks_multipart(["01", "02", "03"])
+    assert scanner._looks_multipart(["Title 1 of 3", "Title 2 of 3"])
+    # Distinct titles are distinct books.
+    assert not scanner._looks_multipart(["Aftermath", "Columbus Day"])
+    assert not scanner._looks_multipart(["Book One", "Something Else"])

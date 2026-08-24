@@ -347,7 +347,17 @@ def write_ffmetadata(chapters: Sequence[Chapter], tags: dict[str, str], path: Pa
 
 
 def _escape_metadata(value: str) -> str:
-    for char in ("=", ";", "#", "\\", "\n"):
+    """Escape a value for ffmetadata.
+
+    The backslash must go first. Escaping it last would also escape the
+    backslashes introduced by the preceding replacements, so a chapter titled
+    "Chapter; One" came out as "Chapter\\\\; One" -- ffmpeg then reads the
+    semicolon as a comment marker and the title is truncated. Titles
+    containing "=" were worse: the key/value split moved and the tag was
+    written to the wrong field.
+    """
+    value = value.replace("\\", "\\\\")
+    for char in ("=", ";", "#", "\n"):
         value = value.replace(char, "\\" + char)
     return value
 

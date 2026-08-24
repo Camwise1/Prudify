@@ -30,6 +30,53 @@ _NUMERIC = re.compile(r"(\d+)")
 # Files that live beside audiobooks and should never be treated as parts.
 _IGNORED_NAMES = {"sample", "sample.mp3", "trailer"}
 
+# M4B and M4A are chapterised containers: one file is normally one whole book.
+# MP3 and friends are normally one chapter each, so several of them in a folder
+# are parts of a single book.
+_SELF_CONTAINED = {".m4b", ".m4a"}
+
+# Trailing "part 3", "disc 2", "CD03", "Book 1 of 4", or a bare "04".
+_PART_MARKER = re.compile(
+    r"""[\s._\-]*
+        (?:\b(?:part|pt|disc|disk|cd|vol|volume|book|chapter|ch|track|file)\b[\s._\-]*)?
+        \d{1,3}
+        (?:\s*of\s*\d{1,3})?
+        \s*$""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _looks_multipart(stems: list[str]) -> bool:
+    """True when every filename is one title plus a part or disc number.
+
+    "Columbus Day - Part 1/2/3" collapses to a single base name, so it is one
+    book in three files. Thirty-two differently-titled M4Bs do not collapse,
+    so they are thirty-two books that happen to share a folder.
+    """
+    if len(stems) < 2:
+        return False
+    bases = {_PART_MARKER.sub("", stem).strip(" -_.").lower() for stem in stems}
+    # One shared base means one book. Purely numeric names ("01", "02") all
+    # reduce to "" -- also one book, split by track.
+    return len(bases) == 1
+
+
+def _group_into_books(audio_files: list[Path]) -> list[list[Path]]:
+    """Split one folder's audio files into one list per distinct book.
+
+    The old behaviour -- one folder is always one book -- silently merges a
+    flat "Author/*.m4b" shelf into a single monstrous multi-part entry, and
+    cleaning that would concatenate unrelated novels into one file.
+    """
+    if len(audio_files) <= 1:
+        return [audio_files]
+    if _looks_multipart([f.stem for f in audio_files]):
+        return [audio_files]
+    if all(f.suffix.lower() in _SELF_CONTAINED for f in audio_files):
+        return [[f] for f in audio_files]
+    # Mixed or chapterised formats: treat the folder as one book, as before.
+    return [audio_files]
+
 
 def natural_key(text: str) -> tuple:
     """Sort "Part 2" before "Part 10".
@@ -164,38 +211,54 @@ def iter_library(library: LibrarySettings) -> Iterator[DiscoveredBook]:
         if _excluded(relative_folder, library.exclude_patterns):
             continue
 
-        parts: list[BookPart] = []
-        total = 0
-        for file in audio_files:
-            try:
-                size = file.stat().st_size
-            except OSError:
-                continue
-            total += size
-            rel = f"{relative_folder}/{file.name}" if relative_folder else file.name
-            parts.append(
-                BookPart(
-                    path=file,
-                    relative_path=rel,
-                    size_bytes=size,
-                    extension=file.suffix.lower(),
+        groups = _group_into_books(audio_files)
+        # When one folder yields several books, each must be identified by its
+        # own file -- otherwise they all hash to the same key and overwrite one
+        # another in the database.
+        split_folder = len(groups) > 1
+
+        for group in groups:
+            parts: list[BookPart] = []
+            total = 0
+            for file in group:
+                try:
+                    size = file.stat().st_size
+                except OSError:
+                    continue
+                total += size
+                rel = f"{relative_folder}/{file.name}" if relative_folder else file.name
+                parts.append(
+                    BookPart(
+                        path=file,
+                        relative_path=rel,
+                        size_bytes=size,
+                        extension=file.suffix.lower(),
+                    )
                 )
+
+            if not parts:
+                continue
+
+            if split_folder:
+                identity = (
+                    f"{relative_folder}/{group[0].name}" if relative_folder else group[0].name
+                )
+            else:
+                identity = relative_folder or folder.name
+
+            title, author = _infer_title_author(
+                folder, relative_folder, parts, standalone=split_folder
             )
-
-        if not parts:
-            continue
-
-        title, author = _infer_title_author(folder, relative_folder, parts)
-        yield DiscoveredBook(
-            library_id=library.id,
-            key=book_key(library.id, relative_folder or folder.name),
-            folder=folder,
-            relative_folder=relative_folder,
-            title=title,
-            author=author,
-            parts=parts,
-            total_bytes=total,
-        )
+            yield DiscoveredBook(
+                library_id=library.id,
+                key=book_key(library.id, identity),
+                folder=folder,
+                relative_folder=relative_folder,
+                title=title,
+                author=author,
+                parts=parts,
+                total_bytes=total,
+            )
 
 
 def _walk(root: Path) -> Iterator[tuple[Path, list[str], list[str]]]:
@@ -205,9 +268,25 @@ def _walk(root: Path) -> Iterator[tuple[Path, list[str], list[str]]]:
         yield Path(dirpath), dirnames, filenames
 
 
-def _infer_title_author(folder: Path, relative_folder: str, parts: list[BookPart]) -> tuple[str, str]:
-    """Prefer the Author/Title folder convention, fall back to embedded tags."""
+def _infer_title_author(
+    folder: Path,
+    relative_folder: str,
+    parts: list[BookPart],
+    standalone: bool = False,
+) -> tuple[str, str]:
+    """Prefer the Author/Title folder convention, fall back to embedded tags.
+
+    ``standalone`` marks one of several books sharing a folder. There the
+    folder names the *author*, never the book, so the title has to come from
+    the filename or the file's own tags.
+    """
     segments = [s for s in relative_folder.split("/") if s]
+
+    if standalone:
+        title = Path(parts[0].path).stem
+        author = segments[0] if segments else ""
+        return _prefer_tags(parts, title, author)
+
     if len(segments) >= 2:
         # Author/[Series/]Title -- the last segment is the book, the first the
         # author. Returned as (title, author).
@@ -218,8 +297,15 @@ def _infer_title_author(folder: Path, relative_folder: str, parts: list[BookPart
         # A loose file sitting at the library root: name it after the file.
         title, author = Path(parts[0].path).stem, ""
 
-    # Only reach for tags when the path did not tell us enough; one ffprobe per
-    # book is noticeable on a slow network share.
+    return _prefer_tags(parts, title, author)
+
+
+def _prefer_tags(parts: list[BookPart], title: str, author: str) -> tuple[str, str]:
+    """Let the file's own tags improve on a path-derived guess.
+
+    Only reached when the path did not tell us enough; one ffprobe per book is
+    noticeable on a slow network share.
+    """
     try:
         info = audio_mod.probe(parts[0].path)
     except Exception:
