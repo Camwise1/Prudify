@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from prudify.core import audio as audio_mod
@@ -141,3 +143,24 @@ class TestValidation:
         ok, problems = audio_mod.validate_output(info, destination, expect_chapters=True)
         assert not ok
         assert any("Chapter" in problem for problem in problems)
+
+
+class TestFilterScriptArgs:
+    """ffmpeg changed how a filter graph is read from a file."""
+
+    def test_modern_ffmpeg_uses_the_slash_form(self, monkeypatch):
+        monkeypatch.setattr(audio_mod, "ffmpeg_major_version", lambda: 9)
+        assert audio_mod.filter_script_args(Path("g.txt")) == ["-/filter_complex", "g.txt"]
+
+    def test_ffmpeg_7_uses_the_slash_form(self, monkeypatch):
+        monkeypatch.setattr(audio_mod, "ffmpeg_major_version", lambda: 7)
+        assert audio_mod.filter_script_args(Path("g.txt")) == ["-/filter_complex", "g.txt"]
+
+    def test_older_ffmpeg_uses_the_removed_option(self, monkeypatch):
+        monkeypatch.setattr(audio_mod, "ffmpeg_major_version", lambda: 6)
+        assert audio_mod.filter_script_args(Path("g.txt")) == ["-filter_complex_script", "g.txt"]
+
+    def test_unknown_version_assumes_modern(self, monkeypatch):
+        """Git snapshots print a date, not a version -- and they are recent."""
+        monkeypatch.setattr(audio_mod, "ffmpeg_major_version", lambda: 0)
+        assert audio_mod.filter_script_args(Path("g.txt")) == ["-/filter_complex", "g.txt"]

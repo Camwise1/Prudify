@@ -6,10 +6,10 @@ encode pass that produces the cleaned copy.
 
 Design notes
 ------------
-* Filter graphs are written to a *file* and passed with
-  ``-filter_complex_script``. A book with a few hundred hits produces a filter
-  string well past the Windows 32 KB command-line limit, and this sidesteps it
-  entirely on every platform.
+* Filter graphs are written to a *file* rather than the command line (see
+  ``filter_script_args``, which picks the spelling this ffmpeg understands).
+  A book with a few hundred hits produces a filter string well past the
+  Windows 32 KB command-line limit, and this sidesteps it on every platform.
 * The cleaned file is produced in **one** ffmpeg pass from the original input,
   so ``-map_metadata``/``-map_chapters`` can copy tags, chapters and cover art
   straight from the source. No separate remux step, no metadata round-trip.
@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -27,6 +28,7 @@ import threading
 from collections import deque
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 from ..config import find_binary
@@ -120,6 +122,45 @@ def ffprobe_path() -> str:
             "to the full path of the binary."
         )
     return path
+
+
+@lru_cache(maxsize=1)
+def ffmpeg_major_version() -> int:
+    """Major version of the ffmpeg binary, or 0 if it cannot be determined."""
+    try:
+        out = subprocess.run(
+            [ffmpeg_path(), "-version"], capture_output=True, text=True, check=False
+        )
+    except Exception:  # noqa: BLE001 - treated the same as an unknown version
+        return 0
+    first = (out.stdout or "").splitlines()
+    if not first:
+        return 0
+    # "ffmpeg version 6.1.1-3ubuntu5", "ffmpeg version n7.1", "ffmpeg version 9.0-full_build"
+    match = re.search(r"ffmpeg version n?(\d+)", first[0])
+    return int(match.group(1)) if match else 0
+
+
+def filter_script_args(path: Path) -> list[str]:
+    """Arguments for reading a filter graph from a file, across ffmpeg versions.
+
+    Graphs go in a file because a book with a few hundred hits produces a
+    filter string past the Windows 32 KB command-line limit.
+
+    ``-filter_complex_script`` did that job for years, was deprecated in
+    ffmpeg 7.0 in favour of the generic "read this option's value from a file"
+    syntax, and is **gone in 9.0** -- where it fails with "Unrecognized option
+    'filter_complex_script'" and no other explanation. The replacement,
+    ``-/filter_complex``, does not exist before 7.0, so neither spelling works
+    everywhere and the binary in front of us decides.
+
+    Git snapshots print a date rather than a version; those are recent, so an
+    unparseable version is assumed modern.
+    """
+    major = ffmpeg_major_version()
+    if major == 0 or major >= 7:
+        return ["-/filter_complex", str(path)]
+    return ["-filter_complex_script", str(path)]
 
 
 def ffmpeg_version() -> str:
@@ -463,7 +504,7 @@ def render(
         )
         cmd += ["-i", str(metadata_file)]
 
-    cmd += ["-filter_complex_script", str(graph_file), "-map", "[aout]"]
+    cmd += [*filter_script_args(graph_file), "-map", "[aout]"]
 
     if copy_cover and not two_pass:
         cmd += [
