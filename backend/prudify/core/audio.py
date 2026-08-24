@@ -23,6 +23,8 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
+from collections import deque
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -580,6 +582,27 @@ def run_ffmpeg(
         creationflags=creationflags,
     )
 
+    # ffmpeg writes progress to stdout and its log to stderr, and it blocks
+    # when either pipe's buffer fills. Reading only stdout therefore deadlocks:
+    # ffmpeg stops writing progress because it is stuck writing stderr, and we
+    # wait forever for progress that will never come. It takes a chatty input
+    # to trigger -- an M4B carrying a stale chapter stream emits a warning per
+    # packet -- and Windows pipe buffers are far smaller than Linux's, so it
+    # strikes there first. Drain stderr on its own thread.
+    stderr_tail: deque[str] = deque(maxlen=200)
+
+    def _drain_stderr() -> None:
+        if process.stderr is None:
+            return
+        try:
+            for line in process.stderr:
+                stderr_tail.append(line)
+        except Exception:  # noqa: BLE001 - the pipe closing is not an error
+            pass
+
+    drainer = threading.Thread(target=_drain_stderr, name="ffmpeg-stderr", daemon=True)
+    drainer.start()
+
     try:
         if progress and total_duration > 0 and process.stdout is not None:
             for line in process.stdout:
@@ -592,13 +615,19 @@ def run_ffmpeg(
                 if cancel and cancel():
                     process.terminate()
                     raise FFmpegError("Cancelled")
-        stdout, stderr = process.communicate()
+        elif process.stdout is not None:
+            # Nothing is parsing stdout, but it still has to be drained.
+            process.stdout.read()
+        process.wait()
     except Exception:
         process.kill()
+        process.wait()
         raise
+    finally:
+        drainer.join(timeout=5)
 
     if process.returncode != 0:
-        tail = "\n".join((stderr or "").strip().splitlines()[-25:])
+        tail = "\n".join("".join(stderr_tail).strip().splitlines()[-25:])
         raise FFmpegError(
             f"ffmpeg exited with code {process.returncode}", tail, process.returncode
         )

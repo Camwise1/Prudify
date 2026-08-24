@@ -111,7 +111,14 @@ def clean(
         task = progress_ui.add_task("starting", total=1000)
 
         def on_progress(stage: str, fraction: float, message: str) -> None:
-            progress_ui.update(task, completed=int(fraction * 1000), description=message[:40])
+            # Fall back to the stage name so the bar never shows a stale or
+            # empty label -- a long transcription with no message would
+            # otherwise still read "probing".
+            progress_ui.update(
+                task,
+                completed=int(fraction * 1000),
+                description=(message or stage)[:40],
+            )
 
         result = clean_part(
             source=source,
