@@ -1,6 +1,6 @@
 services:
   prudify:
-    image: ghcr.io/YOURNAME/prudify:latest
+    image: ${PRUDIFY_IMAGE:-ghcr.io/YOURNAME/prudify:latest}
     # To build from a checkout instead of pulling:
     # build: .
     container_name: prudify

@@ -1,0 +1,89 @@
+# Prudify on Docker Desktop for Windows.
+#
+# This file exists because a Windows Docker host has two problems a Linux one
+# does not:
+#
+#   1. Mapped network drives (Y:, Z:) do not exist inside the container VM.
+#      Docker Desktop runs on WSL2, which sees your local drives at /mnt/c,
+#      /mnt/e and so on, but knows nothing about drive letters Windows mapped
+#      to an SMB share. Bind-mounting "Y:\Plex\Books\Audiobook" therefore
+#      fails, or worse, silently mounts an empty directory. The fix is to let
+#      Docker mount the share itself, over CIFS, using the volume definitions
+#      at the bottom of this file.
+#
+#   2. Bind mounts from Windows drives into a Linux container cross a
+#      translation layer that is slow -- fine for config files, painful for the
+#      multi-gigabyte temporary WAVs that transcription writes. So the work
+#      directory lives in a native Docker volume instead.
+#
+# Usage:
+#   copy .env.windows.example to .env and fill it in
+#   docker compose -f docker-compose.yml -f docker/compose.windows.yml up -d
+
+services:
+  prudify:
+    environment:
+      # Heavy scratch I/O goes to the named volume declared below, not to a
+      # Windows bind mount. This is the single biggest performance setting on
+      # a Windows host.
+      PRUDIFY_WORK_DIR: /work
+
+      # Your Xeon D-1521 is 4 cores / 8 threads. Six leaves the machine
+      # usable while transcribing; raise to 8 if it is otherwise idle.
+      OMP_NUM_THREADS: 6
+
+      # SMB never delivers inotify events, so the filesystem watcher would sit
+      # silent forever. Polling plus the scheduled rescan is what actually
+      # notices new books on a network share.
+      PRUDIFY_POLLING_WATCHER: "1"
+
+    volumes:
+      # Small files, safe on a Windows bind mount: config, database, logs,
+      # transcripts and the downloaded Whisper models. Keeping this on E:
+      # means it survives `docker compose down -v` and stays off your very
+      # full C: drive.
+      - ${PRUDIFY_CONFIG_DIR:-E:/PrudifyData/config}:/config
+
+      # The library and its cleaned twin, mounted over CIFS. See below.
+      - audiobooks:/audiobooks:ro
+      - audiobooks_clean:/audiobooks-clean
+
+      # Native volume for scratch renders.
+      - work:/work
+
+    # Transcription will happily consume the whole box. Capping it keeps the
+    # machine responsive; remove if this host does nothing else.
+    deploy:
+      resources:
+        limits:
+          cpus: "6"
+          memory: 12g
+
+volumes:
+  work:
+
+  # --- The network share ---------------------------------------------------
+  #
+  # Fill these in from .env. SERVER is the hostname or IP hosting the share
+  # (for a Synology, the NAS itself), and SHARE_PATH is the path *within* the
+  # share, so "//192.168.1.10/Media/Plex/Books/Audiobook".
+  #
+  # vers=3.0 suits any modern NAS. If the mount fails with "invalid argument",
+  # try vers=2.1. If it fails with "permission denied", the credentials are
+  # wrong -- test them from Windows Explorer first.
+  #
+  # uid/gid 1000 matches the container user so the cleaned files are readable.
+
+  audiobooks:
+    driver: local
+    driver_opts:
+      type: cifs
+      device: "//${SMB_SERVER}/${SMB_AUDIOBOOKS_PATH}"
+      o: "username=${SMB_USER},password=${SMB_PASSWORD},vers=3.0,ro,uid=1000,gid=1000,iocharset=utf8"
+
+  audiobooks_clean:
+    driver: local
+    driver_opts:
+      type: cifs
+      device: "//${SMB_SERVER}/${SMB_CLEAN_PATH}"
+      o: "username=${SMB_USER},password=${SMB_PASSWORD},vers=3.0,uid=1000,gid=1000,iocharset=utf8,file_mode=0664,dir_mode=0775"

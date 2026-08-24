@@ -32,3 +32,6 @@ config/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local secrets (SMB credentials for the Windows compose overlay)
+.env

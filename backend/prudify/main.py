@@ -123,6 +123,15 @@ def _mount_frontend(app: FastAPI, config: Config) -> None:
     index = STATIC_DIR / "index.html"
 
     if not index.exists():
+        # Loud on startup as well as per-request: in Docker the 503 body is
+        # easy to miss, and `docker logs` is where people actually look.
+        log.warning(
+            "No web UI found at %s -- the API will work but every page will "
+            "return 503. If this is a container image, the build did not "
+            "package backend/prudify/static.",
+            STATIC_DIR,
+        )
+
         @app.get(base or "/", include_in_schema=False)
         def missing_ui() -> JSONResponse:
             return JSONResponse(
