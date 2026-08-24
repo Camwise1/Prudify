@@ -17,7 +17,7 @@
 #      directory lives in a native Docker volume instead.
 #
 # Usage:
-#   copy .env.windows.example to .env and fill it in
+#   copy docker/env.windows.example to .env in the repo root and fill it in
 #   docker compose -f docker-compose.yml -f docker/compose.windows.yml up -d
 
 services:
