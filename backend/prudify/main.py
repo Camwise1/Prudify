@@ -101,7 +101,10 @@ def create_app(config: Config | None = None) -> FastAPI:
             allow_headers=["*"],
         )
 
-    api = APIRouter(prefix=f"{config.server.url_base}/api/v1", dependencies=[Depends(require_api_key)])
+    api = APIRouter(
+        prefix=f"{config.server.url_base}/api/v1",
+        dependencies=[Depends(require_api_key)],
+    )
     api.include_router(routes_books.router)
     api.include_router(routes_jobs.router)
     api.include_router(routes_settings.router)

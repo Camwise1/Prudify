@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from prudify.core import audio as audio_mod
 from prudify.core.audio import Chapter
 

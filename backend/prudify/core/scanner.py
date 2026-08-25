@@ -172,7 +172,10 @@ def _is_audio(path: Path, allowed: Iterable[str]) -> bool:
 
 
 def _excluded(relative: str, patterns: Iterable[str]) -> bool:
-    return any(fnmatch(relative, pattern) or fnmatch(relative, f"*/{pattern}") for pattern in patterns)
+    return any(
+        fnmatch(relative, pattern) or fnmatch(relative, f"*/{pattern}")
+        for pattern in patterns
+    )
 
 
 def scan_library(library: LibrarySettings) -> list[DiscoveredBook]:
@@ -321,7 +324,9 @@ def _prefer_tags(parts: list[BookPart], title: str, author: str) -> tuple[str, s
     return title, author
 
 
-def output_path_for(library: LibrarySettings, part_relative_path: str, container: str = "same") -> Path:
+def output_path_for(
+    library: LibrarySettings, part_relative_path: str, container: str = "same"
+) -> Path:
     """Where a cleaned part is written, mirroring the source tree."""
     out_root = Path(library.output_path).expanduser()
     destination = out_root / part_relative_path

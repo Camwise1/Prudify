@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from prudify.config import LibrarySettings
 from prudify.core import scanner
 

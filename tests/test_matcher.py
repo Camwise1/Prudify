@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from prudify.core import matcher as M
 from prudify.core.transcribe import Word
 

@@ -467,7 +467,9 @@ def transcribe_file(
         # chunk owns them. Words are kept if their midpoint is in the core.
         for word in chunk_words:
             midpoint = (word.start + word.end) / 2
-            if core_start <= midpoint < core_end or (index == chunk_count - 1 and midpoint >= core_start):
+            if core_start <= midpoint < core_end or (
+                index == chunk_count - 1 and midpoint >= core_start
+            ):
                 all_words.append(word)
 
         if progress:

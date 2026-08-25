@@ -8,7 +8,6 @@ matching, the filter graph, encoding, validation and publication.
 from __future__ import annotations
 
 import pytest
-
 from prudify.core import audio as audio_mod
 from prudify.core.pipeline import clean_part, transcript_cache_path
 from prudify.core.transcribe import Transcript, Word

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import pytest
 import yaml
-from pydantic import ValidationError
-
 from prudify.config import (
     Config,
     FilterSettings,
@@ -15,6 +13,7 @@ from prudify.config import (
     load_config,
     save_config,
 )
+from pydantic import ValidationError
 
 
 def test_first_run_creates_a_config_file(tmp_path, monkeypatch):

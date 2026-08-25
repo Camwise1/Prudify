@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
-
 from prudify.config import LibrarySettings, save_config
 from prudify.main import create_app
 
@@ -117,7 +116,8 @@ def test_settings_validation_rejects_bad_values(app_client):
     client, _ = app_client
     settings = client.get("/api/v1/settings").json()
     settings["filtering"]["pad_after_ms"] = -5
-    assert client.put("/api/v1/settings", json={"filtering": settings["filtering"]}).status_code == 422
+    response = client.put("/api/v1/settings", json={"filtering": settings["filtering"]})
+    assert response.status_code == 422
 
 
 def test_library_crud(app_client, tmp_path):

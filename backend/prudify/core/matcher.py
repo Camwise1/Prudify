@@ -29,7 +29,9 @@ _APOSTROPHES = str.maketrans({"’": "'", "ʼ": "'", "´": "'", "`": "'"})
 
 # Deliberately conservative: only substitutions people actually use to sneak
 # words past filters, and only applied when leet_normalise is enabled.
-_LEET = str.maketrans({"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", "$": "s"})
+_LEET = str.maketrans(
+    {"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", "$": "s"}
+)
 
 
 def normalize(text: str) -> str:
