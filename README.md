@@ -42,6 +42,9 @@ that describes this honestly.
   the result against the source before publishing it.
 - **Mirrors** your folder structure into a clean library you can point a second
   Audiobookshelf library at.
+- **Handles podcasts too.** Set a library's layout to *Episodes* and each file
+  is treated as its own item rather than one part of a single enormous work,
+  so a show with hundreds of episodes cleans and fails one episode at a time.
 - **Never writes to your source files.** Mount them read-only if you want the
   guarantee enforced rather than promised.
 
@@ -76,19 +79,33 @@ services:
     environment:
       OMP_NUM_THREADS: 4          # Whisper threads; the main speed knob
       TZ: America/Denver
+      PRUDIFY_WORK_DIR: /work     # keep multi-GB scratch off the config mount
     volumes:
       - ./config:/config
+      - work:/work
       - /path/to/audiobooks:/audiobooks:ro
       - /path/to/audiobooks-clean:/audiobooks-clean
+    logging:                      # or the container log grows without bound
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  work:
 ```
 
 ```bash
 docker compose up -d
-docker compose logs prudify | grep "API key"
 ```
 
-Open <http://localhost:8317>, paste the API key, and add a library pointing at
-`/audiobooks` → `/audiobooks-clean`.
+Open <http://localhost:8317> and create your account — the first visit sets the
+username and password. Then add a library pointing at `/audiobooks` →
+`/audiobooks-clean`.
+
+**The output path must be on a writable mount.** Pointing it inside a `:ro`
+media mount is the most common setup mistake; Prudify now refuses it when you
+save the library rather than failing after transcription.
 
 ### Native (macOS, Windows, Linux)
 
@@ -223,6 +240,13 @@ that actually fires. Set `PRUDIFY_POLLING_WATCHER=1` to force polling.
 That is the intended setup. Point one Audiobookshelf library at your source
 folder and a second at the clean folder.
 
+**Why does the percentage sit still for so long?**
+Because one stage really is that long. Encoding a 20 hour book is a single
+ffmpeg run, and publishing the result to a network share is a multi-gigabyte
+copy. The queue reports how long the current stage has been running and an
+estimate for it, so a number that has not moved still tells you it is alive.
+If the elapsed time stops climbing too, that is a genuine hang — check Logs.
+
 **Why is my book stuck at "transcribing"?**
 The first run downloads the Whisper model. After that, check Logs — the usual
 culprits are a missing model cache volume or too few threads.
@@ -262,3 +286,11 @@ coverage that a one-shot CLI is not trying to provide.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+The container image also ships other people's software. Everything Prudify
+depends on is MIT, BSD-3-Clause or Apache-2.0, with one thing worth knowing:
+Debian builds FFmpeg with `--enable-gpl`, so the image carries a GPL binary.
+That does not reach Prudify's own licence — FFmpeg runs as a separate process
+rather than being linked — but it does put a source-offer obligation on anyone
+redistributing the image. The details are in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

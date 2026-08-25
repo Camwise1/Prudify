@@ -50,6 +50,7 @@ libraries:
     output_path: /audiobooks-clean
     enabled: true
     auto_process: true       # queue new books automatically
+    layout: books            # books | episodes -- see below
     extensions: []           # [] means every supported format
     exclude_patterns: []     # globs relative to source_path
 
@@ -160,6 +161,34 @@ Source and output must be different directories. If the output folder sits
 inside the source folder, Prudify skips it during scans so cleaned files are
 never re-cleaned — but keeping them separate is tidier.
 
+The output path has to be writable, and Prudify checks by writing a file there
+rather than by trying to create the directory. Creating a directory that
+already exists succeeds even on a read-only mount, which is exactly how an
+output path aimed inside a `:ro` media mount used to pass validation and then
+fail hours later, after the book had been transcribed.
+
+### Layout: books or episodes
+
+`layout: books` is the default and assumes the audiobook convention — a folder
+is one work, and the files inside it are its parts. Twelve MP3s in
+`Author/Title/` are twelve chapters of one book.
+
+`layout: episodes` says the folder is a *show* and every file in it is a
+separate thing someone listens to on its own. Use it for podcasts. Without it
+a show reaches the scanner as a pile of differently-titled MP3s, which is the
+one case the grouping heuristics treat as a single multi-part work — so three
+hundred episodes become one job that succeeds or fails as a unit, and one bad
+file takes the lot with it.
+
+In episodic mode the episode title comes from the filename and the show from
+its folder, with no tag lookup. Reading tags costs one `ffprobe` per file, and
+for a show with hundreds of episodes on a network share that is the entire
+scan, spent to learn a title the filename already carries.
+
+Podcasts and audiobooks want separate library entries even when they live
+under the same mount. If the podcast folder sits inside your audiobook tree,
+add it to that library's `exclude_patterns` so it is not catalogued twice.
+
 Point a second Audiobookshelf (or Plex, or Jellyfin) library at the output
 folder. Because the folder structure is mirrored, your metadata agents will
 match the same books.
@@ -198,6 +227,19 @@ is the usual cause. Prudify deletes the bad output rather than publishing it.
 set, check `compute_type` is `int8` on CPU, and consider a smaller model. The
 Dashboard shows which stage a job is in — if it is stuck at `transcribing`,
 that is Whisper, not Prudify.
+
+**The percentage has not moved in twenty minutes.** Probably nothing is wrong.
+Encoding is a single ffmpeg run over the whole book, and publishing the result
+to a network share is a multi-gigabyte copy; both can hold one number for a
+long time. The queue reports how long the current stage has been running, so
+check that the elapsed time is still climbing. If it has frozen too, the job
+really is stuck — Logs will have the last thing ffmpeg said.
+
+**The scratch volume keeps growing.** A container killed mid-render cannot
+clean up after itself. Prudify sweeps abandoned job directories at startup,
+keeping only those belonging to jobs still queued, so a restart reclaims them.
+On Docker Desktop for Windows note that the volume lives inside a WSL2 disk
+image which grows to its high-water mark and never shrinks on its own.
 
 **Chapters lost on MP3 output.** MP3 has no standard chapter container the way
 M4B does. Keep `container: same` for M4B sources.
