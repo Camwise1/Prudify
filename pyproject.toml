@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "prudify"
-version = "1.0.0"
+version = "1.1.0"
 description = "Self-hosted profanity filtering for audiobook libraries, with a web UI."
 readme = "README.md"
 requires-python = ">=3.10"
