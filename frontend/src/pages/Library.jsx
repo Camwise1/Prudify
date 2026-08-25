@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { api } from '../lib/api.js'
 import { formatBytes, formatDuration, relativeTime } from '../lib/format.js'
-import { Empty, StatusPill, useToast } from '../components/ui.jsx'
+import { BookCover, Empty, StatusPill, useToast } from '../components/ui.jsx'
 import BookDetail from './BookDetail.jsx'
 
 const PAGE_SIZE = 50
@@ -162,10 +162,15 @@ export default function Library({ refreshKey, initialStatus = '' }) {
               {data.items.map((book) => (
                 <tr key={book.id} className="clickable" onClick={() => setSelected(book.id)}>
                   <td>
-                    <div className="cell-title truncate">{book.title}</div>
-                    {book.part_count > 1 ? (
-                      <div className="cell-sub">{book.part_count} files</div>
-                    ) : null}
+                    <div className="cover-row">
+                      <BookCover bookId={book.id} title={book.title} size={44} />
+                      <div>
+                        <div className="cell-title truncate">{book.title}</div>
+                        {book.part_count > 1 ? (
+                          <div className="cell-sub">{book.part_count} files</div>
+                        ) : null}
+                      </div>
+                    </div>
                   </td>
                   <td className="dim truncate">{book.author || '—'}</td>
                   <td>

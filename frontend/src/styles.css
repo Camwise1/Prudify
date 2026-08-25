@@ -294,6 +294,52 @@ button.stat.stat-link:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
+/* Cover art. The initial sits underneath and the image fades in on top, so a
+   book with no artwork is a deliberate-looking tile rather than a gap, and
+   nothing reflows when a cover loads. */
+.cover {
+  position: relative;
+  flex: none;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+}
+
+.cover-initial {
+  font-weight: 650;
+  color: var(--text-faint);
+  font-size: 0.9em;
+  user-select: none;
+}
+
+.cover-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.cover-img.loaded {
+  opacity: 1;
+}
+
+.cover-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.cover-row > div {
+  min-width: 0;
+}
+
 button,
 .btn {
   font: inherit;

@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { api } from '../lib/api.js'
 import { STATUS_LABELS } from '../lib/format.js'
 
 /* ---------------- toasts ---------------- */
@@ -64,6 +65,33 @@ export function Stat({ label, value, sub, onClick, title }) {
       <div className="stat-value">{value}</div>
       {sub ? <div className="stat-sub">{sub}</div> : null}
     </button>
+  )
+}
+
+export function BookCover({ bookId, title, size = 48 }) {
+  // Artwork is optional and often absent, so the initial is the resting state
+  // and the image is layered over it once it loads. That way nothing shifts
+  // when a cover arrives late, and a book without one looks deliberate rather
+  // than broken.
+  const [loaded, setLoaded] = React.useState(false)
+  const initial = (title || '?').trim().charAt(0).toUpperCase()
+
+  return (
+    <div className="cover" style={{ width: size, height: size }} aria-hidden="true">
+      <span className="cover-initial">{initial}</span>
+      <img
+        src={api.coverUrl(bookId)}
+        alt=""
+        loading="lazy"
+        className={loaded ? 'cover-img loaded' : 'cover-img'}
+        onLoad={(event) => {
+          // The blank pixel means "no artwork" -- do not fade it in over the
+          // initial, or every coverless book shows an empty square instead.
+          if (event.target.naturalWidth > 2) setLoaded(true)
+        }}
+        onError={() => setLoaded(false)}
+      />
+    </div>
   )
 }
 

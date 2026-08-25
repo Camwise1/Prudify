@@ -100,6 +100,12 @@ export async function request(path, options = {}) {
 }
 
 export const api = {
+  // Artwork is loaded by the browser as an <img src>, which cannot carry a
+  // header -- so this is a plain URL and the session cookie authenticates it.
+  // A book with no artwork answers with a blank pixel rather than a 404, so
+  // scrolling a library does not fill the console with errors.
+  coverUrl: (bookId) => `${apiBase()}/books/${encodeURIComponent(bookId)}/cover`,
+
   // auth
   authStatus: () => request('/auth/status'),
   login: (username, password) =>

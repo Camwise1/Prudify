@@ -275,6 +275,9 @@ class Config(BaseModel):
     def transcript_dir(self) -> Path:
         return self.resolved_data_dir() / "transcripts"
 
+    def cover_dir(self) -> Path:
+        return self.resolved_data_dir() / "covers"
+
     def log_path(self) -> Path:
         return self.resolved_data_dir() / "logs" / "prudify.log"
 

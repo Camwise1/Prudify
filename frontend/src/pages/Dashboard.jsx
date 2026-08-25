@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../lib/api.js'
 import { formatBytes, formatDuration, jobActivity, relativeTime } from '../lib/format.js'
-import { Banner, Empty, Progress, Stat, StatusPill, useToast } from '../components/ui.jsx'
+import { Banner, BookCover, Empty, Progress, Stat, StatusPill, useToast } from '../components/ui.jsx'
 
 export default function Dashboard({ status, queue, onNavigate, onRefresh }) {
   const toast = useToast()
@@ -128,6 +128,9 @@ export default function Dashboard({ status, queue, onNavigate, onRefresh }) {
           active.map((job) => (
             <div key={job.job_id} className="active-job mb">
               <div className="active-job-head">
+                {job.book_id ? (
+                  <BookCover bookId={job.book_id} title={job.title} size={40} />
+                ) : null}
                 <b>{job.title}</b>
                 <span className="faint">{job.author}</span>
                 <span className="pct">{Math.round((job.progress || 0) * 100)}%</span>
@@ -190,8 +193,13 @@ export default function Dashboard({ status, queue, onNavigate, onRefresh }) {
                 {recentBooks.map((book) => (
                   <tr key={book.id}>
                     <td>
-                      <div className="cell-title truncate">{book.title}</div>
-                      <div className="cell-sub">{book.author || 'Unknown author'}</div>
+                      <div className="cover-row">
+                        <BookCover bookId={book.id} title={book.title} size={40} />
+                        <div>
+                          <div className="cell-title truncate">{book.title}</div>
+                          <div className="cell-sub">{book.author || 'Unknown author'}</div>
+                        </div>
+                      </div>
                     </td>
                     <td className="right">
                       <StatusPill status={book.status} />

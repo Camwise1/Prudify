@@ -5,10 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ..config import Config
+from ..core import audio as audio_mod
 from ..db import db_session, session_scope
 from ..models import Book, BookStatus, Part
 from ..schemas import BookDetail, BookOut, BookPage, PartOut
@@ -84,6 +86,53 @@ def get_book(book_id: str, session: Session = Depends(db_session)) -> BookDetail
     detail = BookDetail.model_validate(book)
     detail.parts = [PartOut.model_validate(part) for part in book.parts]
     return detail
+
+
+# A 1x1 transparent GIF. Returned instead of a 404 for a book with no
+# artwork, so the browser caches the "nothing here" answer rather than
+# re-asking on every scroll, and the console stays free of red.
+_BLANK_GIF = bytes.fromhex(
+    "47494638396101000100800000000000ffffff21f90401000000002c00000000"
+    "010001000002024401003b"
+)
+
+
+@router.get("/{book_id}/cover")
+def get_book_cover(
+    book_id: str,
+    session: Session = Depends(db_session),
+    config: Config = Depends(get_config),
+) -> Response:
+    """The book's embedded artwork, extracted once and then served from cache.
+
+    Extraction is lazy rather than part of scanning. A scan touches every book
+    in the library, and one ffmpeg per book across a network share turns a
+    fast operation into a slow one -- to produce thumbnails for the handful of
+    books actually on screen. Doing it on first request spends that cost only
+    where someone is looking.
+    """
+    cached = config.cover_dir() / f"{book_id}.jpg"
+    if cached.exists():
+        return FileResponse(cached, media_type="image/jpeg")
+
+    book = session.get(Book, book_id)
+    if book is None:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    missing = config.cover_dir() / f"{book_id}.none"
+    if missing.exists():
+        return Response(content=_BLANK_GIF, media_type="image/gif")
+
+    for part in book.parts:
+        source = Path(part.path)
+        if source.exists() and audio_mod.extract_cover(source, cached):
+            return FileResponse(cached, media_type="image/jpeg")
+
+    # Remember the absence too, or every page view re-probes a file that has
+    # no artwork and never will.
+    missing.parent.mkdir(parents=True, exist_ok=True)
+    missing.touch()
+    return Response(content=_BLANK_GIF, media_type="image/gif")
 
 
 @router.get("/{book_id}/matches")
