@@ -183,17 +183,23 @@ async def _authenticate(
     # forms and basic both rest on the local account, and both accept a
     # session cookie -- basic auth users still get a session after the first
     # successful prompt, which keeps CSRF handling uniform.
-    if not auth.configured:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication is enabled but no account has been created yet.",
-        )
-
     user = _session_user(request, config)
     if user is None and auth.method == "basic":
         user = _basic_user(config, request.headers.get("authorization"))
 
     if user is None:
+        if not auth.configured:
+            # No account exists yet, so no session or Basic credential can be
+            # valid. This is still a 401 rather than a 503: the request simply
+            # was not authenticated, and every client -- including our own UI
+            # -- reacts to a 401 by asking /api/v1/auth/status, which is
+            # public and reports needs_setup. Answering 503 here made a wrong
+            # API key look like an outage instead of a rejected credential.
+            raise _unauthorized(
+                config,
+                "No account has been created yet. Open the web UI to create one, "
+                "or run `prudify auth set-password`.",
+            )
         raise _unauthorized(config)
 
     _require_csrf(request, config)
