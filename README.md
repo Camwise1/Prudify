@@ -68,7 +68,7 @@ that describes this honestly.
 # docker-compose.yml
 services:
   prudify:
-    image: ghcr.io/YOURNAME/prudify:latest
+    image: ghcr.io/camwise1/prudify:latest
     container_name: prudify
     restart: unless-stopped
     ports:
@@ -107,7 +107,7 @@ running it as a service on each platform.
 ### From source
 
 ```bash
-git clone https://github.com/YOURNAME/prudify && cd prudify
+git clone https://github.com/Camwise1/Prudify.git prudify && cd prudify
 pip install -e ".[whisper,dev]"
 cd frontend && npm install && npm run build && cd ..
 prudify serve

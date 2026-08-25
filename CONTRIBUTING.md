@@ -6,7 +6,7 @@ welcome.
 ## Getting set up
 
 ```bash
-git clone https://github.com/YOURNAME/prudify && cd prudify
+git clone https://github.com/Camwise1/Prudify.git prudify && cd prudify
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[whisper,dev]"
 

@@ -1,6 +1,6 @@
 services:
   prudify:
-    image: ${PRUDIFY_IMAGE:-ghcr.io/YOURNAME/prudify:latest}
+    image: ${PRUDIFY_IMAGE:-ghcr.io/camwise1/prudify:latest}
     # Build from this checkout when the image is not already present locally.
     # Remove this line once you are pulling a published image and would rather
     # a missing tag be an error than a silent 20-minute rebuild.

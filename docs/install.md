@@ -18,7 +18,7 @@ docker run -d \
   -v /path/to/audiobooks:/audiobooks:ro \
   -v /path/to/audiobooks-clean:/audiobooks-clean \
   --restart unless-stopped \
-  ghcr.io/YOURNAME/prudify:latest
+  ghcr.io/camwise1/prudify:latest
 ```
 
 The API key is printed to the container log on first start:
