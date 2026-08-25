@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
-from ..config import Config, LibrarySettings, save_config
+from ..config import Config, LibrarySettings, save_config, writable_dir_error
 from ..core import matcher as matcher_mod
 from ..core.transcribe import Word
 from ..db import session_scope
@@ -85,30 +85,35 @@ def list_libraries(config: Config = Depends(get_config)) -> list[dict]:
                 **library.model_dump(),
                 "source_exists": source.is_dir(),
                 "output_exists": destination.is_dir(),
+                "output_writable": destination.is_dir()
+                and writable_dir_error(destination) is None,
             }
         )
     return output
 
 
-@router.post("/libraries")
-def create_library(
-    request: Request, payload: LibraryIn, config: Config = Depends(get_config)
-) -> dict:
+def _validate_paths(payload: LibraryIn) -> None:
+    """Reject a library whose paths cannot do the job, before it is saved."""
     source = Path(payload.source_path).expanduser()
     if not source.is_dir():
         raise HTTPException(status_code=400, detail=f"Source path not found: {source}")
 
     output = Path(payload.output_path).expanduser()
-    try:
-        output.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        raise HTTPException(status_code=400, detail=f"Cannot create output path: {exc}") from exc
+    problem = writable_dir_error(output)
+    if problem:
+        raise HTTPException(status_code=400, detail=f"Output path is unusable: {problem}")
 
     if source.resolve() == output.resolve():
         raise HTTPException(
             status_code=400, detail="Output path must differ from the source path"
         )
 
+
+@router.post("/libraries")
+def create_library(
+    request: Request, payload: LibraryIn, config: Config = Depends(get_config)
+) -> dict:
+    _validate_paths(payload)
     library = LibrarySettings(**payload.model_dump())
     config.libraries.append(library)
     save_config(config)
@@ -127,6 +132,10 @@ def update_library(
     library = config.library_by_id(library_id)
     if library is None:
         raise HTTPException(status_code=404, detail="Library not found")
+    # Same checks as creation. Without them a library could be created with a
+    # good output path and later edited to point inside a read-only mount,
+    # which is not discovered until a book finishes transcribing.
+    _validate_paths(payload)
     updated = LibrarySettings(id=library_id, **payload.model_dump())
     config.libraries = [updated if lib.id == library_id else lib for lib in config.libraries]
     save_config(config)

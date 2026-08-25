@@ -10,6 +10,15 @@ services:
     # A running job needs time to stop cleanly; the default 10s guarantees a
     # SIGKILL mid-render.
     stop_grace_period: 60s
+    # Without this the json-file driver keeps every line the container has
+    # ever written, on the Docker data root, forever. Transcription is
+    # chatty -- one progress line per chunk per book -- and the log outgrows
+    # the library it describes.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "8317:8317"
     environment:

@@ -48,11 +48,24 @@ services:
       - audiobooks:/audiobooks:ro
       - audiobooks_clean:/audiobooks-clean
 
-      # Native volume for scratch renders.
+      # Native volume for scratch renders. This lives inside Docker Desktop's
+      # WSL2 disk image on C:, which grows to its high-water mark and never
+      # shrinks again -- so a single 30 hour book can cost C: several GB
+      # permanently, even after the scratch files are deleted. If C: is
+      # tight, comment this line out and use the bind mount below instead:
+      # slower per job, but the space is on E: and is genuinely returned.
       - work:/work
+      # - ${PRUDIFY_WORK_DIR_HOST:-E:/PrudifyData/work}:/work
 
     # Transcription will happily consume the whole box. Capping it keeps the
     # machine responsive; remove if this host does nothing else.
+    #
+    # Do not set `memory` below what the Whisper model needs. The allocation
+    # happens when a job leaves probing and loads the model, so too small a
+    # limit shows up as the container dying and restarting at exactly that
+    # moment -- `docker inspect prudify --format '{{.State.ExitCode}}'`
+    # returns 137 when this is what happened. Budget roughly 2g for the
+    # service, plus 1g (base) to 4g (large-v3) for the model.
     deploy:
       resources:
         limits:

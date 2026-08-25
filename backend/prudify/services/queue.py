@@ -30,6 +30,17 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _directory_size(path: Path) -> int:
+    total = 0
+    for item in path.rglob("*"):
+        try:
+            if item.is_file():
+                total += item.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
 class JobQueue:
     """Thread-pool style worker over a SQLite-backed job table."""
 
@@ -47,6 +58,7 @@ class JobQueue:
 
     def start(self) -> None:
         self._requeue_orphans()
+        self._sweep_stale_work_dirs()
         count = max(1, self.config.processing.max_concurrent_jobs)
         for index in range(count):
             thread = threading.Thread(
@@ -94,6 +106,59 @@ class JobQueue:
                 job.started_at = None
             if orphans:
                 log.info("Requeued %d interrupted job(s)", len(orphans))
+
+    def _sweep_stale_work_dirs(self) -> None:
+        """Delete scratch directories left behind by a job that will never finish.
+
+        ``_process`` removes its own work directory on the way out, but only
+        when it gets to run to the end. A container killed mid-render -- OOM,
+        ``docker restart``, a host reboot -- leaves a job directory holding a
+        multi-gigabyte WAV and a partial render, and nothing ever collected
+        them. On a Docker volume that is invisible growth until the disk is
+        full, which is precisely when it is hardest to diagnose.
+
+        Directories belonging to a job that is still pending or running are
+        kept: those hold the cached transcription chunks that let a requeued
+        job resume rather than start the book again.
+        """
+        if self.config.processing.keep_work_files:
+            return
+        work_root = self.config.resolved_work_dir()
+        if not work_root.is_dir():
+            return
+
+        with session_scope() as session:
+            live = {
+                job_id
+                for (job_id,) in session.execute(
+                    select(Job.id).where(
+                        Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value])
+                    )
+                ).all()
+            }
+
+        removed = 0
+        freed = 0
+        for entry in work_root.iterdir():
+            if not entry.is_dir() or not entry.name.startswith("job-"):
+                continue
+            try:
+                job_id = int(entry.name[4:])
+            except ValueError:
+                continue
+            if job_id in live:
+                continue
+            freed += _directory_size(entry)
+            shutil.rmtree(entry, ignore_errors=True)
+            removed += 1
+
+        if removed:
+            log.info(
+                "Removed %d abandoned work director%s, freeing %.1f GB",
+                removed,
+                "y" if removed == 1 else "ies",
+                freed / (1024**3),
+            )
 
     # -- enqueue ----------------------------------------------------------
 

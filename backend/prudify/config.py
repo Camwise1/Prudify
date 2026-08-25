@@ -9,6 +9,7 @@ duplicate the settings themselves, which keeps a single source of truth.
 
 from __future__ import annotations
 
+import errno
 import os
 import secrets
 import shutil
@@ -139,6 +140,12 @@ class LibrarySettings(BaseModel):
     enabled: bool = True
     # Automatically queue newly detected books rather than only listing them.
     auto_process: bool = True
+    # How the tree is shaped. "books" is the audiobook convention: a folder of
+    # files is one work split into parts. "episodes" suits podcasts and other
+    # serial audio, where a folder is a *show* and each file is a separate
+    # thing someone listens to on its own. The difference is not cosmetic --
+    # it decides whether one bad file fails 300 episodes or just itself.
+    layout: Literal["books", "episodes"] = "books"
     # Restrict to these extensions; empty means "every supported format".
     extensions: list[str] = Field(default_factory=list)
     # Glob patterns (relative to source_path) that are never processed.
@@ -362,6 +369,42 @@ def save_config(config: Config, path: Path | None = None) -> Path:
     except OSError:
         pass  # Windows, or a filesystem without POSIX modes
     return path
+
+
+def writable_dir_error(path: Path) -> str | None:
+    """Return why ``path`` cannot be written to, or ``None`` when it can.
+
+    ``Path.mkdir(parents=True, exist_ok=True)`` is not a writability test.
+    On a read-only mount it succeeds for any directory that already exists,
+    which is exactly the shape of the mistake this catches: an output path
+    aimed inside a ``:ro`` media mount whose top-level folder happens to
+    exist. Nothing fails until a book finishes transcribing and the
+    per-title subdirectory cannot be created -- twenty minutes of CPU after
+    the point where the answer was already knowable. Writing a real file is
+    the only check that tells the truth.
+    """
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        if exc.errno == errno.EROFS:
+            return f"{path} is on a read-only filesystem"
+        return f"Cannot create {path}: {exc.strerror or exc}"
+
+    probe = path / f".prudify-write-test-{os.getpid()}-{secrets.token_hex(4)}"
+    try:
+        probe.touch()
+    except OSError as exc:
+        if exc.errno == errno.EROFS:
+            return f"{path} is on a read-only filesystem"
+        if exc.errno == errno.EACCES:
+            return f"No permission to write to {path} (check PUID/PGID)"
+        return f"Cannot write to {path}: {exc.strerror or exc}"
+    finally:
+        try:
+            probe.unlink()
+        except OSError:
+            pass
+    return None
 
 
 def find_binary(name: str, configured: str = "") -> str | None:

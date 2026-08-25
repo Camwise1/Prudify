@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..config import Config
+from ..config import Config, writable_dir_error
 from . import audio as audio_mod
 from . import matcher as matcher_mod
 from . import transcribe as transcribe_mod
@@ -168,11 +168,30 @@ def clean_part(
         return result
 
     needed = config.processing.min_free_space_mb
-    if needed and free_space_mb(destination.parent) < needed:
-        result.reason = (
-            f"Less than {needed} MB free at the destination; refusing to start"
-        )
-        return result
+    if needed:
+        # The work directory matters as much as the destination: transcription
+        # writes a 16 kHz WAV of the whole book (roughly 115 MB per hour) and
+        # the render stages a second copy of the output beside it. Checking
+        # only the destination let the scratch volume fill silently.
+        for label, where in (
+            ("destination", destination.parent),
+            ("work directory", work_dir),
+        ):
+            if free_space_mb(where) < needed:
+                result.reason = (
+                    f"Less than {needed} MB free at the {label} ({where}); "
+                    "refusing to start"
+                )
+                return result
+
+    # Prove the destination is writable now, while the answer costs nothing.
+    # Skipped for a dry run, which writes nothing and should not create empty
+    # directories in the clean library.
+    if not config.processing.dry_run:
+        problem = writable_dir_error(destination.parent)
+        if problem:
+            result.reason = problem
+            return result
     report("probing", 1.0)
 
     work_dir.mkdir(parents=True, exist_ok=True)

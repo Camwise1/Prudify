@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 from prudify.config import LibrarySettings, save_config
@@ -161,6 +163,95 @@ def test_library_rejects_missing_source(app_client, tmp_path):
         },
     )
     assert response.status_code == 400
+
+
+def test_startup_sweeps_abandoned_work_directories(app_client):
+    """A container killed mid-render leaves gigabytes nobody ever collects."""
+    client, config = app_client
+    from prudify.services.queue import JobQueue
+
+    work = config.resolved_work_dir()
+    abandoned = work / "job-999999" / "transcribe"
+    abandoned.mkdir(parents=True)
+    (abandoned / "audio.wav").write_bytes(b"\0" * 4096)
+    unrelated = work / "not-a-job"
+    unrelated.mkdir(parents=True, exist_ok=True)
+
+    JobQueue(config)._sweep_stale_work_dirs()
+
+    assert not (work / "job-999999").exists()
+    assert unrelated.exists(), "only job-* directories are ours to delete"
+
+
+def test_the_sweep_spares_work_still_queued(app_client):
+    """Those directories hold the chunk cache that lets a requeued job resume."""
+    client, config = app_client
+    from prudify.services.queue import JobQueue
+
+    client.post("/api/v1/books/scan")
+    book_id = client.get("/api/v1/books").json()["items"][0]["id"]
+    job_id = client.post(f"/api/v1/books/{book_id}/queue").json()["job_id"]
+
+    live = config.resolved_work_dir() / f"job-{job_id}"
+    live.mkdir(parents=True, exist_ok=True)
+    (live / "chunk-0000.json").write_text("[]")
+
+    JobQueue(config)._sweep_stale_work_dirs()
+
+    assert live.exists()
+
+
+def test_library_rejects_an_unwritable_output_path(app_client, tmp_path):
+    client, _ = app_client
+    source = tmp_path / "src"
+    source.mkdir()
+    blocker = tmp_path / "blocked"
+    blocker.write_text("a file, not a directory")
+    response = client.post(
+        "/api/v1/libraries",
+        json={
+            "name": "Bad",
+            "source_path": str(source),
+            "output_path": str(blocker / "clean"),
+        },
+    )
+    assert response.status_code == 400
+    assert "unusable" in response.json()["detail"]
+
+
+def test_updating_a_library_revalidates_its_paths(app_client, tmp_path):
+    """A library could be created good and then edited to point somewhere unusable."""
+    client, _ = app_client
+    source = tmp_path / "src2"
+    source.mkdir()
+    created = client.post(
+        "/api/v1/libraries",
+        json={
+            "name": "Good",
+            "source_path": str(source),
+            "output_path": str(tmp_path / "good-clean"),
+        },
+    ).json()
+
+    blocker = tmp_path / "blocked2"
+    blocker.write_text("a file, not a directory")
+    response = client.put(
+        f"/api/v1/libraries/{created['id']}",
+        json={
+            "name": "Good",
+            "source_path": str(source),
+            "output_path": str(blocker / "clean"),
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_library_listing_reports_writability(app_client):
+    client, config = app_client
+    Path(config.libraries[0].output_path).mkdir(parents=True, exist_ok=True)
+    entry = client.get("/api/v1/libraries").json()[0]
+    assert entry["output_exists"] is True
+    assert entry["output_writable"] is True
 
 
 def test_wordlist_read_and_shadow(app_client):

@@ -216,3 +216,69 @@ def test_missing_source_is_reported(config, tmp_path):
     )
     assert not outcome.ok
     assert "no longer exists" in outcome.reason
+
+
+class TestDestinationPreflight:
+    """An unusable output path must be caught before the CPU is spent.
+
+    This is the read-only-mount bug: an output path pointing inside a ``:ro``
+    media mount only failed at ``destination.parent.mkdir()``, which happens
+    after transcription. A twenty hour book burned hours of CPU to reach a
+    conclusion available in milliseconds.
+    """
+
+    def test_unwritable_destination_fails_before_transcribing(
+        self, config, sample_m4b, tmp_path
+    ):
+        # Deliberately no seeded transcript: if the preflight regresses, this
+        # falls through to a real Whisper model download instead of returning
+        # at once, and the test hangs rather than quietly passing.
+        blocker = tmp_path / "blocked"
+        blocker.write_text("a file where a directory needs to be")
+        outcome = clean_part(
+            sample_m4b, blocker / "Author" / "Book.m4b", config, tmp_path / "work"
+        )
+        assert not outcome.ok
+        assert "Cannot create" in outcome.reason
+        assert outcome.word_count == 0
+
+    def test_a_writable_destination_still_works(self, prepared, tmp_path):
+        config, source = prepared
+        destination = tmp_path / "clean" / "Author" / "Book.m4b"
+        outcome = clean_part(source, destination, config, tmp_path / "work")
+        assert outcome.ok, outcome.reason
+        assert destination.exists()
+
+    def test_the_probe_file_is_cleaned_up(self, prepared, tmp_path):
+        config, source = prepared
+        destination = tmp_path / "clean" / "Book.m4b"
+        clean_part(source, destination, config, tmp_path / "work")
+        assert list(destination.parent.glob(".prudify-write-test-*")) == []
+
+    def test_a_dry_run_creates_no_output_directory(self, prepared, tmp_path):
+        config, source = prepared
+        config.processing.dry_run = True
+        destination = tmp_path / "never-created" / "Book.m4b"
+        outcome = clean_part(source, destination, config, tmp_path / "work")
+        assert outcome.ok and outcome.skipped
+        assert not destination.parent.exists()
+
+    def test_low_space_on_the_work_volume_is_refused(
+        self, prepared, tmp_path, monkeypatch
+    ):
+        config, source = prepared
+        config.processing.min_free_space_mb = 1024
+        work = tmp_path / "work"
+
+        import prudify.core.pipeline as pipeline_mod
+
+        real = pipeline_mod.free_space_mb
+        monkeypatch.setattr(
+            pipeline_mod,
+            "free_space_mb",
+            lambda path: 1.0 if str(path).startswith(str(work)) else real(path),
+        )
+        outcome = clean_part(source, tmp_path / "clean" / "Book.m4b", config, work)
+        assert not outcome.ok
+        assert "work directory" in outcome.reason
+
