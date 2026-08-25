@@ -287,6 +287,13 @@ def clean_part(
     def r_progress(fraction: float) -> None:
         report("rendering", fraction, "Encoding cleaned audio")
 
+    # Announce the stage before ffmpeg starts rather than on its first progress
+    # line. Building the graph, opening a multi-gigabyte input over a network
+    # share and configuring the encoder all happen before ffmpeg emits
+    # anything, and until it did the UI still showed the end of matching --
+    # which is why the bar appeared to stop dead at exactly that percentage.
+    report("rendering", 0.0, "Starting encoder")
+
     try:
         audio_mod.render(
             source=source,

@@ -165,6 +165,51 @@ def test_library_rejects_missing_source(app_client, tmp_path):
     assert response.status_code == 400
 
 
+class TestProgressPayload:
+    """A percentage that has not moved must still say the job is alive."""
+
+    def _state(self, **overrides):
+        state = {
+            "job_id": 7,
+            "progress": 0.76,
+            "stage": "rendering",
+            "message": "Encoding cleaned audio",
+            "part_index": 1,
+            "part_total": 1,
+            "stage_fraction": 0.0,
+            "started_at": 100.0,
+            "stage_started_at": 400.0,
+        }
+        state.update(overrides)
+        return state
+
+    def test_reports_how_long_the_stage_has_been_running(self):
+        from prudify.services.queue import _progress_payload
+
+        payload = _progress_payload(self._state(), now=1000.0)
+        assert payload["stage_elapsed"] == 600.0
+        assert payload["elapsed"] == 900.0
+
+    def test_no_eta_before_there_is_anything_to_extrapolate_from(self):
+        from prudify.services.queue import _progress_payload
+
+        payload = _progress_payload(self._state(stage_fraction=0.001), now=1000.0)
+        assert payload["stage_eta_seconds"] is None
+
+    def test_eta_once_the_stage_is_under_way(self):
+        from prudify.services.queue import _progress_payload
+
+        # A quarter done after ten minutes means thirty minutes to go.
+        payload = _progress_payload(self._state(stage_fraction=0.25), now=1000.0)
+        assert payload["stage_eta_seconds"] == 1800.0
+
+    def test_the_heartbeat_thread_starts_with_the_queue(self, app_client):
+        import threading
+
+        names = {thread.name for thread in threading.enumerate()}
+        assert "prudify-heartbeat" in names
+
+
 def test_startup_sweeps_abandoned_work_directories(app_client):
     """A container killed mid-render leaves gigabytes nobody ever collects."""
     client, config = app_client

@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import shutil
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -28,6 +29,41 @@ log = logging.getLogger(__name__)
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+_HEARTBEAT_SECONDS = 5.0
+# Below this, a publish per ffmpeg progress line is a few hundred events a
+# minute per job, all saying almost the same thing.
+_MIN_PUBLISH_INTERVAL = 1.0
+
+
+def _progress_payload(state: dict, now: float) -> dict:
+    """The wire form of a running job, with the timings the UI needs.
+
+    ``stage_elapsed`` is what makes a stalled-looking percentage readable, and
+    ``stage_eta_seconds`` turns it into something a person can plan around.
+    The ETA is deliberately naive -- elapsed divided by fraction done -- and is
+    withheld until the stage is 2% in, because before that the extrapolation is
+    numerically silly and reads as a bug.
+    """
+    started = state.get("stage_started_at") or now
+    stage_elapsed = max(0.0, now - started)
+    fraction = state.get("stage_fraction") or 0.0
+
+    eta = None
+    if fraction > 0.02 and stage_elapsed > 1.0:
+        eta = stage_elapsed * (1.0 - fraction) / fraction
+
+    payload = {
+        key: state.get(key)
+        for key in (
+            "job_id", "progress", "stage", "message", "part_index", "part_total",
+        )
+    }
+    payload["stage_elapsed"] = round(stage_elapsed, 1)
+    payload["elapsed"] = round(max(0.0, now - (state.get("started_at") or now)), 1)
+    payload["stage_eta_seconds"] = round(eta, 1) if eta is not None else None
+    return payload
 
 
 def _directory_size(path: Path) -> int:
@@ -59,6 +95,11 @@ class JobQueue:
     def start(self) -> None:
         self._requeue_orphans()
         self._sweep_stale_work_dirs()
+        heartbeat = threading.Thread(
+            target=self._heartbeat, name="prudify-heartbeat", daemon=True
+        )
+        heartbeat.start()
+        self._threads.append(heartbeat)
         count = max(1, self.config.processing.max_concurrent_jobs)
         for index in range(count):
             thread = threading.Thread(
@@ -106,6 +147,26 @@ class JobQueue:
                 job.started_at = None
             if orphans:
                 log.info("Requeued %d interrupted job(s)", len(orphans))
+
+    def _heartbeat(self) -> None:
+        """Re-publish a running job's state even when nothing has changed.
+
+        Encoding a long book is one ffmpeg invocation that can run for an hour,
+        and between its progress lines -- or while it is doing something that
+        emits none at all, like the faststart rewrite -- the UI has nothing to
+        say. A percentage that has not moved in ten minutes is indistinguishable
+        from a hung process, and the only honest way to tell them apart is to
+        keep saying how long the current stage has been running. Silence is the
+        thing that makes people restart a job that was working.
+        """
+        while not self._stop.wait(_HEARTBEAT_SECONDS):
+            now = time.monotonic()
+            for state in list(self._active.values()):
+                updated = state.get("updated_at") or now
+                if now - updated < _HEARTBEAT_SECONDS:
+                    continue  # real progress is already flowing
+                state["updated_at"] = now
+                bus.publish("job.progress", _progress_payload(state, now))
 
     def _sweep_stale_work_dirs(self) -> None:
         """Delete scratch directories left behind by a job that will never finish.
@@ -320,6 +381,7 @@ class JobQueue:
         library = self.config.library_by_id(library_id)
         work_root = self.config.resolved_work_dir() / f"job-{job_id}"
 
+        now = time.monotonic()
         self._active[job_id] = {
             "job_id": job_id,
             "book_id": book_id,
@@ -327,6 +389,10 @@ class JobQueue:
             "author": author,
             "progress": 0.0,
             "stage": "starting",
+            "stage_fraction": 0.0,
+            "started_at": now,
+            "stage_started_at": now,
+            "updated_at": now,
         }
         bus.publish("job.started", self._active[job_id])
 
@@ -359,22 +425,40 @@ class JobQueue:
             def progress(stage: str, fraction: float, message: str, _i=index) -> None:
                 overall = (_i + fraction) / max(1, len(part_ids))
                 state = self._active.get(job_id)
-                if state is not None:
-                    state.update(
-                        {"progress": overall, "stage": stage, "message": message,
-                         "part_index": _i + 1, "part_total": len(part_ids)}
+                if state is None:
+                    return
+
+                now = time.monotonic()
+                stage_changed = state.get("stage") != stage
+                if stage_changed:
+                    # Each stage times itself. An ETA drawn from the whole job
+                    # is dominated by transcription and tells you nothing about
+                    # the encode you are actually waiting on.
+                    state["stage_started_at"] = now
+                    log.info(
+                        "Job %s part %s/%s: %s", job_id, _i + 1, len(part_ids), message or stage
                     )
-                bus.publish(
-                    "job.progress",
+
+                state.update(
                     {
-                        "job_id": job_id,
                         "progress": overall,
                         "stage": stage,
+                        "stage_fraction": fraction,
                         "message": message,
                         "part_index": _i + 1,
                         "part_total": len(part_ids),
-                    },
+                    }
                 )
+
+                # A stage change is news and goes out at once; everything else
+                # waits its turn, so one ffmpeg does not become an event storm.
+                if not stage_changed and now - (state.get("published_at") or 0.0) < (
+                    _MIN_PUBLISH_INTERVAL
+                ):
+                    return
+                state["published_at"] = now
+                state["updated_at"] = now
+                bus.publish("job.progress", _progress_payload(state, now))
 
             try:
                 result = clean_part(

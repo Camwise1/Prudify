@@ -566,6 +566,16 @@ def render(
 
     if cancel and cancel():
         raise OperationCancelled("Cancelled")
+
+    # Nearly always a cross-device move: the scratch volume is local and the
+    # clean library is a network share, so this is a full copy of a multi-
+    # gigabyte file with no progress of any kind. Say so, or the last minutes
+    # of a job look like a hang.
+    try:
+        staged_bytes = stage_out.stat().st_size
+    except OSError:
+        staged_bytes = 0
+    log.info("Publishing %.2f GB to %s", staged_bytes / (1024**3), destination.parent)
     shutil.move(str(stage_out), str(destination))
     return destination
 
