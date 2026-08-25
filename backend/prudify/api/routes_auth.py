@@ -23,7 +23,6 @@ from ..security import (
 )
 from .deps import (
     CSRF_COOKIE,
-    CSRF_HEADER,
     SESSION_COOKIE,
     client_address,
     login_throttle,

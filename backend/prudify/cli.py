@@ -316,7 +316,8 @@ def auth_set_password(
         prompt="New password",
         hide_input=True,
         confirmation_prompt=True,
-        help="Prompted for if not supplied. Avoid passing it on the command line -- it lands in your shell history.",
+        help="Prompted for if not supplied. Avoid passing it on the "
+        "command line -- it lands in your shell history.",
     ),
     sign_out: bool = typer.Option(
         True, "--sign-out/--keep-sessions", help="Invalidate existing sessions."

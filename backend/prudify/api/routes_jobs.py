@@ -15,8 +15,8 @@ from ..db import db_session
 from ..models import Job, JobStatus
 from ..schemas import JobOut, QueueState
 from ..services.events import bus, format_sse
-from .deps import require_auth_stream
 from ..services.queue import get_queue
+from .deps import require_auth_stream
 
 router = APIRouter(prefix="/queue", tags=["queue"])
 

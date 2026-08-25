@@ -6,11 +6,9 @@ import time
 
 import pytest
 from fastapi.testclient import TestClient
-
 from prudify import security
 from prudify.api.deps import CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE, login_throttle
 from prudify.config import _migrate_auth
-
 
 # ---------------------------------------------------------------------------
 # Primitives

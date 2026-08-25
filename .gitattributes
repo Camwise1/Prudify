@@ -1,0 +1,12 @@
+# A shell script checked out with CRLF has "#!/bin/sh\r" as its first line.
+# Linux reads that literally, looks for an interpreter named "/bin/sh\r", and
+# reports "no such file or directory" -- naming the script rather than the
+# interpreter, so it reads as a missing file. COPY such a script into an image
+# and the container will not start. It costs an afternoon every time.
+#
+# CI never sees this: a Linux checkout is LF already. Only a Windows checkout,
+# where core.autocrlf hands out CRLF, produces the broken build.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
