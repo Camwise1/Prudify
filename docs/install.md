@@ -13,8 +13,8 @@ The image bundles ffmpeg and `faster-whisper`, so nothing else is required.
 docker run -d \
   --name prudify \
   -p 8317:8317 \
-  -e OMP_NUM_THREADS=4 \
   -v $(pwd)/config:/config \
+  -v prudify-work:/work \
   -v /path/to/audiobooks:/audiobooks:ro \
   -v /path/to/audiobooks-clean:/audiobooks-clean \
   --restart unless-stopped \
@@ -135,7 +135,9 @@ Type=simple
 User=prudify
 Group=prudify
 Environment="PRUDIFY_DATA_DIR=/var/lib/prudify"
-Environment="OMP_NUM_THREADS=4"
+# Threads are detected from the machine; this variable does not govern
+# transcription (CTranslate2 ignores it when a thread count is passed).
+# Environment="OMP_NUM_THREADS=4"
 ExecStart=/usr/local/bin/prudify serve
 Restart=on-failure
 RestartSec=10
@@ -180,8 +182,6 @@ journalctl -u prudify -f
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>OMP_NUM_THREADS</key>
-    <string>4</string>
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
   </dict>
@@ -213,7 +213,7 @@ Using [NSSM](https://nssm.cc/):
 
 ```powershell
 nssm install Prudify "C:\Python311\Scripts\prudify.exe" serve
-nssm set Prudify AppEnvironmentExtra PRUDIFY_DATA_DIR=E:\Prudify OMP_NUM_THREADS=4
+nssm set Prudify AppEnvironmentExtra PRUDIFY_DATA_DIR=E:\Prudify
 nssm set Prudify AppDirectory E:\Prudify
 nssm set Prudify Start SERVICE_AUTO_START
 nssm set Prudify AppPriority BELOW_NORMAL_PRIORITY_CLASS

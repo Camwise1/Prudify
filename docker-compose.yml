@@ -22,10 +22,14 @@ services:
     ports:
       - "8317:8317"
     environment:
-      # Whisper is CPU-bound, and Prudify now sizes its own transcription
-      # threads from the cores it can actually see -- including a container
-      # CPU limit, which os.cpu_count() ignores. Set this only to cap the
-      # maths libraries below that; leaving it unset uses the machine.
+      # Prudify sizes its own transcription threads from the cores it can
+      # actually see, including a container CPU limit -- which os.cpu_count()
+      # ignores. Use `cpus:` under deploy.resources to cap it.
+      #
+      # OMP_NUM_THREADS is deliberately absent: CTranslate2 reads it only when
+      # intra_threads is 0, and Prudify always passes an explicit count, so it
+      # never governed transcription despite being documented here as the
+      # speed knob. It still affects the VAD and numpy.
       # OMP_NUM_THREADS: 4
       TZ: ${TZ:-Etc/UTC}
       # Match your media share's owner so Plex/Audiobookshelf can manage the

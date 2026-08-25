@@ -29,8 +29,8 @@ services:
       PRUDIFY_WORK_DIR: /work
 
       # Your Xeon D-1521 is 4 cores / 8 threads. Prudify sizes its own
-      # transcription threads now -- and honours the `cpus` limit below, so
-      # this only needs setting to cap the maths libraries further.
+      # transcription threads and honours the `cpus` limit below, so that
+      # limit is the knob -- not this variable, which CTranslate2 ignores.
       # OMP_NUM_THREADS: 6
 
       # SMB never delivers inotify events, so the filesystem watcher would sit

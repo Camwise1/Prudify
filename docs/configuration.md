@@ -19,7 +19,7 @@ binds — the settings themselves are not duplicated there.
 | `PRUDIFY_LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `PRUDIFY_FFMPEG` / `PRUDIFY_FFPROBE` | Explicit binary paths |
 | `PRUDIFY_POLLING_WATCHER` | `1` forces polling instead of filesystem events |
-| `OMP_NUM_THREADS` | Threads available to the transcription backend |
+| `OMP_NUM_THREADS` | Legacy. CTranslate2 ignores it (see below); affects only the VAD and numpy |
 
 ## config.yaml
 
@@ -62,7 +62,7 @@ transcription:
   language: en
   beam_size: 5
   vad_filter: true
-  cpu_threads: 4
+  cpu_threads: 0             # 0 = as many as this machine has
   chunk_minutes: 0           # 0 = auto; long files are chunked
   chunk_overlap_seconds: 2
   model_dir: ""
@@ -137,9 +137,12 @@ prudify auth method none          # last resort on a trusted network
 essentially all clearly-enunciated profanity. `small.en` is meaningfully better
 on mumbled or heavily-accented narration and roughly three times slower.
 
-**`transcription.cpu_threads`** is the main speed control on CPU. Set it to
-your physical core count minus one or two — Whisper will happily take the whole
-machine otherwise.
+**`transcription.cpu_threads`** is the main speed control on CPU, and the
+default of 0 means "as many as this machine has". That is worked out from the
+cgroup CPU quota when one is set and the core count otherwise, leaving one core
+free on anything larger than four — so a container limited to four cores asks
+for four threads even on a sixty-four core host, which `os.cpu_count()` alone
+would get badly wrong. Set a number only to cap it below that.
 
 **`processing.max_concurrent_jobs`** should stay at 1 unless you have cores to
 spare. Two jobs on four cores is slower than one job on four cores.
@@ -223,10 +226,14 @@ and Windows services the process environment does not inherit your shell
 length. Look at Logs for the ffmpeg error; a truncated or corrupt source file
 is the usual cause. Prudify deletes the bad output rather than publishing it.
 
-**Everything is very slow.** Confirm `cpu_threads` and `OMP_NUM_THREADS` are
-set, check `compute_type` is `int8` on CPU, and consider a smaller model. The
-Dashboard shows which stage a job is in — if it is stuck at `transcribing`,
-that is Whisper, not Prudify.
+**Everything is very slow.** Check `compute_type` is `int8` on CPU and
+consider a smaller model. Threads are detected automatically, but the log line
+at model load says what was chosen: `threads=4` on a twelve core machine means
+something is capping it, and that is a container `cpus` limit rather than
+`OMP_NUM_THREADS` — CTranslate2 consults that variable only when
+`intra_threads` is 0, and Prudify always passes an explicit count, so it has
+never governed transcription. The Dashboard shows which stage a job is in
+— if it is stuck at `transcribing`, that is Whisper, not Prudify.
 
 **The percentage has not moved in twenty minutes.** Probably nothing is wrong.
 Encoding is a single ffmpeg run over the whole book, and publishing the result

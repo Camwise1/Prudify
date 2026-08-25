@@ -45,6 +45,17 @@ that describes this honestly.
 - **Handles podcasts too.** Set a library's layout to *Episodes* and each file
   is treated as its own item rather than one part of a single enormous work,
   so a show with hundreds of episodes cleans and fails one episode at a time.
+- **Browse by author**, with a count of what is cleaned and what is waiting,
+  and a *Clean all* button per author. Most libraries divide into writers you
+  want filtered and writers you do not; that is the decision, not book by book.
+- **Shows the cover art** already embedded in your files, extracted on demand
+  and cached, in the library, on the dashboard and beside the running job.
+- **Says what it is doing.** Each job reports its stage, how long that stage
+  has been running and an estimate for it, so a long encode is legibly slow
+  rather than apparently stuck.
+- **Survives being stopped.** A container killed mid-render leaves its job
+  requeued rather than failed, resumes from the cached transcript, and its
+  scratch files are collected on the next start.
 - **Never writes to your source files.** Mount them read-only if you want the
   guarantee enforced rather than promised.
 
@@ -61,7 +72,8 @@ that describes this honestly.
 
 </div>
 
-> The screenshots above use sample data.
+> The screenshots above use sample data, and predate the cover art, the
+> Authors page and the per-stage timings on the dashboard.
 
 ## Install
 
@@ -77,7 +89,6 @@ services:
     ports:
       - "8317:8317"
     environment:
-      OMP_NUM_THREADS: 4          # Whisper threads; the main speed knob
       TZ: America/Denver
       PRUDIFY_WORK_DIR: /work     # keep multi-GB scratch off the config mount
     volumes:
@@ -176,7 +187,10 @@ saved against the original will no longer line up. `mute` is the safe default.
 
 ## Performance
 
-Whisper dominates the runtime. Rough figures for a 15-hour audiobook on CPU:
+Whisper dominates the runtime. Prudify sizes its own transcription threads
+from the cores it can see -- honouring a container CPU limit, which
+`os.cpu_count()` does not -- so there is normally nothing to tune. Rough
+figures for a 15-hour audiobook on CPU:
 
 | Model | RAM | Approx. time (4 cores) | Notes |
 | --- | --- | --- | --- |
