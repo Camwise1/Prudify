@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -96,6 +97,12 @@ _BLANK_GIF = bytes.fromhex(
     "010001000002024401003b"
 )
 
+# A library page asks for every cover on screen at once, and FastAPI runs sync
+# endpoints on a forty-thread pool -- so without a cap, opening the page starts
+# forty ffmpeg processes against a network share simultaneously. Two at a time
+# fills the cache just as quickly in practice and leaves the machine usable.
+_EXTRACTION_SLOTS = threading.Semaphore(2)
+
 
 @router.get("/{book_id}/cover")
 def get_book_cover(
@@ -115,18 +122,33 @@ def get_book_cover(
     if cached.exists():
         return FileResponse(cached, media_type="image/jpeg")
 
-    book = session.get(Book, book_id)
-    if book is None:
-        raise HTTPException(status_code=404, detail="Book not found")
-
+    # Both cache answers are checked before the database is touched at all, so
+    # a settled library serves its artwork without a single query.
     missing = config.cover_dir() / f"{book_id}.none"
     if missing.exists():
         return Response(content=_BLANK_GIF, media_type="image/gif")
 
-    for part in book.parts:
-        source = Path(part.path)
-        if source.exists() and audio_mod.extract_cover(source, cached):
+    book = session.get(Book, book_id)
+    if book is None:
+        raise HTTPException(status_code=404, detail="Book not found")
+    sources = [Path(part.path) for part in book.parts]
+
+    # Let go of the transaction before running ffmpeg. Every session here
+    # opens with BEGIN IMMEDIATE, which takes SQLite's *write* lock even for
+    # a read -- so holding one across a subprocess that probes a multi-
+    # gigabyte file on a network share stops every other query in the
+    # process, including the other fifty cover requests the same page just
+    # issued. That is what turned opening the library into a wall of
+    # "database is locked".
+    session.rollback()
+
+    with _EXTRACTION_SLOTS:
+        # Another request may have extracted it while we waited for a slot.
+        if cached.exists():
             return FileResponse(cached, media_type="image/jpeg")
+        for source in sources:
+            if source.exists() and audio_mod.extract_cover(source, cached):
+                return FileResponse(cached, media_type="image/jpeg")
 
     # Remember the absence too, or every page view re-probes a file that has
     # no artwork and never will.

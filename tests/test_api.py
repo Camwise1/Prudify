@@ -183,6 +183,37 @@ def test_a_cover_for_a_missing_book_is_404(app_client):
     assert client.get("/api/v1/books/nope/cover").status_code == 404
 
 
+def test_a_settled_cover_is_served_without_touching_the_database(app_client, config):
+    """The lock storm: every session takes SQLite's write lock, even to read.
+
+    Fifty cover requests from one library page, each holding that lock across
+    an ffmpeg run on a network share, is what filled the log with "database is
+    locked". Once an answer is cached -- artwork or the marker saying there is
+    none -- the endpoint must not query at all. Deleting the book proves it:
+    a lookup would 404.
+    """
+    client, _ = app_client
+    client.post("/api/v1/books/scan")
+    book_id = client.get("/api/v1/books").json()["items"][0]["id"]
+
+    assert client.get(f"/api/v1/books/{book_id}/cover").status_code == 200
+    assert (config.cover_dir() / f"{book_id}.none").exists()
+
+    from prudify.db import session_scope
+    from prudify.models import Book
+
+    with session_scope() as session:
+        session.delete(session.get(Book, book_id))
+
+    assert client.get(f"/api/v1/books/{book_id}/cover").status_code == 200
+
+
+def test_extraction_is_capped_so_a_page_load_is_not_forty_ffmpegs(app_client):
+    from prudify.api.routes_books import _EXTRACTION_SLOTS
+
+    assert _EXTRACTION_SLOTS._value == 2
+
+
 class TestExpectedOutputBytes:
     """Feeds the fallback progress bar when ffmpeg reports out_time=N/A."""
 
