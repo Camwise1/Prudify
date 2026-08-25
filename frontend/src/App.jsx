@@ -7,11 +7,13 @@ import Queue from './pages/Queue.jsx'
 import Wordlists from './pages/Wordlists.jsx'
 import Settings from './pages/Settings.jsx'
 import Logs from './pages/Logs.jsx'
+import Authors from './pages/Authors.jsx'
 import Login from './pages/Login.jsx'
 
 const NAV = [
   { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
   { id: 'library', label: 'Library', icon: 'library' },
+  { id: 'authors', label: 'Authors', icon: 'library' },
   { id: 'queue', label: 'Queue', icon: 'queue' },
   { id: 'wordlists', label: 'Wordlists', icon: 'words' },
   { id: 'settings', label: 'Settings', icon: 'settings' },
@@ -21,6 +23,7 @@ const NAV = [
 const TITLES = {
   dashboard: 'Dashboard',
   library: 'Library',
+  authors: 'Authors',
   queue: 'Queue',
   wordlists: 'Wordlists',
   settings: 'Settings',
@@ -256,7 +259,20 @@ function Shell() {
           <Dashboard status={status} queue={queue} onNavigate={navigate} onRefresh={refresh} />
         ) : null}
         {route === 'library' ? (
-          <Library refreshKey={refreshKey} initialStatus={params.status || ''} />
+          <Library
+            refreshKey={refreshKey}
+            initialStatus={params.status || ''}
+            initialAuthor={params.author || ''}
+            initialBook={params.book || ''}
+          />
+        ) : null}
+        {route === 'authors' ? (
+          <Authors
+            refreshKey={refreshKey}
+            onOpenAuthor={(author) =>
+              navigate(`library?author=${encodeURIComponent(author)}`)
+            }
+          />
         ) : null}
         {route === 'queue' ? <Queue queue={queue} onRefresh={refresh} /> : null}
         {route === 'wordlists' ? (

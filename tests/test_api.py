@@ -331,6 +331,43 @@ def test_the_sweep_spares_work_still_queued(app_client):
     assert live.exists()
 
 
+class TestAuthors:
+    """Deciding what to clean happens one author at a time, not one book."""
+
+    def test_authors_report_what_is_done_and_what_is_waiting(self, app_client):
+        client, _ = app_client
+        client.post("/api/v1/books/scan")
+        authors = client.get("/api/v1/books/authors").json()
+        assert len(authors) == 1
+        entry = authors[0]
+        assert entry["author"] == "Author"
+        assert entry["count"] == 1
+        assert entry["cleaned"] == 0
+        assert entry["pending"] == 1
+
+    def test_the_listing_can_be_narrowed_to_one_author(self, app_client):
+        client, _ = app_client
+        client.post("/api/v1/books/scan")
+        assert client.get("/api/v1/books?author=Author").json()["total"] == 1
+        assert client.get("/api/v1/books?author=Someone Else").json()["total"] == 0
+
+    def test_queueing_by_author_leaves_the_others_alone(self, app_client):
+        client, _ = app_client
+        client.post("/api/v1/books/scan")
+
+        # An author nobody asked for must not have their books queued: that is
+        # hours of CPU spent on a library the person deliberately excluded.
+        assert client.post("/api/v1/books/queue-all?author=J.K. Rowling").json()[
+            "queued"
+        ] == 0
+        assert client.post("/api/v1/books/queue-all?author=Author").json()["queued"] == 1
+
+    def test_the_author_match_is_exact_not_a_search(self, app_client):
+        client, _ = app_client
+        client.post("/api/v1/books/scan")
+        assert client.post("/api/v1/books/queue-all?author=Auth").json()["queued"] == 0
+
+
 def test_library_rejects_an_unwritable_output_path(app_client, tmp_path):
     client, _ = app_client
     source = tmp_path / "src"

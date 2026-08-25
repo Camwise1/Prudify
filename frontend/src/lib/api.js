@@ -129,11 +129,17 @@ export const api = {
 
   // books
   books: (params = {}) => request(`/books?${new URLSearchParams(params)}`),
+  authors: () => request('/books/authors'),
   book: (id) => request(`/books/${id}`),
   bookMatches: (id) => request(`/books/${id}/matches`),
   queueBook: (id) => request(`/books/${id}/queue`, { method: 'POST' }),
-  queueAll: (libraryId) =>
-    request(`/books/queue-all${libraryId ? `?library_id=${libraryId}` : ''}`, { method: 'POST' }),
+  queueAll: (libraryId, author) => {
+    const params = new URLSearchParams()
+    if (libraryId) params.set('library_id', libraryId)
+    if (author) params.set('author', author)
+    const query = params.toString()
+    return request(`/books/queue-all${query ? `?${query}` : ''}`, { method: 'POST' })
+  },
   setMonitored: (id, monitored) =>
     request(`/books/${id}/monitor?monitored=${monitored}`, { method: 'POST' }),
   resetBook: (id, opts = {}) =>

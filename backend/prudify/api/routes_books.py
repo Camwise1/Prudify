@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, Response
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..config import Config
@@ -27,6 +27,7 @@ def list_books(
     session: Session = Depends(db_session),
     q: str | None = Query(default=None, description="Search title or author"),
     status: str | None = Query(default=None),
+    author: str | None = Query(default=None, description="Exact author match"),
     library_id: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=500),
@@ -42,6 +43,8 @@ def list_books(
         filters.append(or_(Book.title.ilike(pattern), Book.author.ilike(pattern)))
     if status:
         filters.append(Book.status.in_(status.split(",")))
+    if author:
+        filters.append(Book.author == author)
     if library_id:
         filters.append(Book.library_id == library_id)
     for condition in filters:
@@ -73,10 +76,49 @@ def list_books(
 
 @router.get("/authors")
 def list_authors(session: Session = Depends(db_session)) -> list[dict]:
+    """Every author with enough detail to decide what to do about them.
+
+    A library is not a flat list of books to its owner; it is a list of
+    authors, some of whom need cleaning and some of whom do not. The counts
+    are what make that decision without opening anything: how many books,
+    how many are done, and how many are still waiting.
+    """
     rows = session.execute(
-        select(Book.author, func.count(Book.id)).group_by(Book.author).order_by(Book.author)
+        select(
+            Book.author,
+            func.count(Book.id),
+            func.sum(case((Book.status == BookStatus.CLEANED.value, 1), else_=0)),
+            func.sum(
+                case(
+                    (
+                        and_(
+                            Book.status.in_(
+                                [BookStatus.NEW.value, BookStatus.PARTIAL.value]
+                            ),
+                            Book.monitored.is_(True),
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ),
+            func.coalesce(func.sum(Book.total_bytes), 0),
+            func.coalesce(func.sum(Book.match_count), 0),
+        )
+        .group_by(Book.author)
+        .order_by(Book.author)
     ).all()
-    return [{"author": author or "Unknown", "count": count} for author, count in rows]
+    return [
+        {
+            "author": author or "Unknown",
+            "count": count,
+            "cleaned": int(cleaned or 0),
+            "pending": int(pending or 0),
+            "total_bytes": int(total_bytes or 0),
+            "match_count": int(matches or 0),
+        }
+        for author, count, cleaned, pending, total_bytes, matches in rows
+    ]
 
 
 @router.get("/{book_id}", response_model=BookDetail)
@@ -207,9 +249,10 @@ def queue_book(
 @router.post("/queue-all")
 def queue_all(
     library_id: str | None = Query(default=None),
+    author: str | None = Query(default=None, description="Only this author's books"),
     session: Session = Depends(db_session),
 ) -> dict:
-    books = library_service.pending_books(session, library_id)
+    books = library_service.pending_books(session, library_id, author)
     queue = get_queue()
     count = 0
     for book in books:

@@ -6,10 +6,16 @@ import BookDetail from './BookDetail.jsx'
 
 const PAGE_SIZE = 50
 
-export default function Library({ refreshKey, initialStatus = '' }) {
+export default function Library({
+  refreshKey,
+  initialStatus = '',
+  initialAuthor = '',
+  initialBook = '',
+}) {
   const toast = useToast()
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState(initialStatus)
+  const [author, setAuthor] = useState(initialAuthor)
   const [sort, setSort] = useState('author')
   const [order, setOrder] = useState('asc')
   const [page, setPage] = useState(1)
@@ -24,20 +30,28 @@ export default function Library({ refreshKey, initialStatus = '' }) {
       const params = { page, page_size: PAGE_SIZE, sort, order }
       if (query.trim()) params.q = query.trim()
       if (status) params.status = status
+      if (author) params.author = author
       setData(await api.books(params))
     } catch (err) {
       toast(err.message, 'error')
     } finally {
       setLoading(false)
     }
-  }, [page, sort, order, query, status, toast])
+  }, [page, sort, order, query, status, author, toast])
 
-  // Arriving from a dashboard tile changes the filter under us; the page
-  // resets too, or you land on page 3 of a list that now has one page.
+  // Arriving from a dashboard tile or an author changes the filter under us;
+  // the page resets too, or you land on page 3 of a list that now has one.
   useEffect(() => {
     setStatus(initialStatus)
+    setAuthor(initialAuthor)
     setPage(1)
-  }, [initialStatus])
+  }, [initialStatus, initialAuthor])
+
+  // A link that names a book opens it, which is what lets every list in the
+  // app -- not just this table -- lead to the detail view.
+  useEffect(() => {
+    if (initialBook) setSelected(initialBook)
+  }, [initialBook])
 
   useEffect(() => {
     const handle = setTimeout(load, query ? 250 : 0)
@@ -94,6 +108,18 @@ export default function Library({ refreshKey, initialStatus = '' }) {
           <option value="ignored">Ignored</option>
           <option value="missing">Missing</option>
         </select>
+        {author ? (
+          <button
+            className="small"
+            title="Show every author again"
+            onClick={() => {
+              setAuthor('')
+              setPage(1)
+            }}
+          >
+            {author} ✕
+          </button>
+        ) : null}
         <div className="spacer" />
         <span className="faint">{data.total} book(s)</span>
         <button
@@ -114,7 +140,7 @@ export default function Library({ refreshKey, initialStatus = '' }) {
           className="small primary"
           onClick={async () => {
             try {
-              const result = await api.queueAll()
+              const result = await api.queueAll(null, author || undefined)
               toast(`Queued ${result.queued} book(s)`, 'success')
               setTick((t) => t + 1)
             } catch (err) {
@@ -122,7 +148,7 @@ export default function Library({ refreshKey, initialStatus = '' }) {
             }
           }}
         >
-          Queue all pending
+          {author ? `Queue all by ${author}` : 'Queue all pending'}
         </button>
       </div>
 
@@ -172,7 +198,23 @@ export default function Library({ refreshKey, initialStatus = '' }) {
                       </div>
                     </div>
                   </td>
-                  <td className="dim truncate">{book.author || '—'}</td>
+                  <td className="dim truncate">
+                    {book.author ? (
+                      <button
+                        className="linkish"
+                        title={`Show only ${book.author}`}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          setAuthor(book.author)
+                          setPage(1)
+                        }}
+                      >
+                        {book.author}
+                      </button>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
                   <td>
                     <StatusPill status={book.status} />
                   </td>

@@ -194,13 +194,22 @@ def scan_all(session: Session, config: Config) -> list[dict]:
     return results
 
 
-def pending_books(session: Session, library_id: str | None = None) -> list[Book]:
+def pending_books(
+    session: Session,
+    library_id: str | None = None,
+    author: str | None = None,
+) -> list[Book]:
     query = select(Book).where(
         Book.status.in_([BookStatus.NEW.value, BookStatus.PARTIAL.value]),
         Book.monitored.is_(True),
     )
     if library_id:
         query = query.where(Book.library_id == library_id)
+    if author is not None:
+        # Exact match, not a search. This feeds "clean everything by this
+        # author", where matching loosely would quietly queue somebody else's
+        # books -- hours of CPU spent on a library the person did not choose.
+        query = query.where(Book.author == author)
     return list(session.execute(query.order_by(Book.author, Book.title)).scalars())
 
 

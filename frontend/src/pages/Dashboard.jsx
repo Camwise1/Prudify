@@ -127,7 +127,14 @@ export default function Dashboard({ status, queue, onNavigate, onRefresh }) {
         ) : (
           active.map((job) => (
             <div key={job.job_id} className="active-job mb">
-              <div className="active-job-head">
+              <div
+                className={`active-job-head${job.book_id ? ' clickable' : ''}`}
+                onClick={
+                  job.book_id
+                    ? () => onNavigate(`library?book=${job.book_id}`)
+                    : undefined
+                }
+              >
                 {job.book_id ? (
                   <BookCover bookId={job.book_id} title={job.title} size={40} />
                 ) : null}
@@ -163,7 +170,15 @@ export default function Dashboard({ status, queue, onNavigate, onRefresh }) {
             <table>
               <tbody>
                 {pending.slice(0, 8).map((job) => (
-                  <tr key={job.id}>
+                  <tr
+                    key={job.id}
+                    className={job.book_id ? 'clickable' : undefined}
+                    onClick={
+                      job.book_id
+                        ? () => onNavigate(`library?book=${job.book_id}`)
+                        : undefined
+                    }
+                  >
                     <td>
                       <div className="cell-title">{job.book_title}</div>
                       <div className="cell-sub">{job.book_author}</div>
@@ -191,7 +206,11 @@ export default function Dashboard({ status, queue, onNavigate, onRefresh }) {
             <table>
               <tbody>
                 {recentBooks.map((book) => (
-                  <tr key={book.id}>
+                  <tr
+                    key={book.id}
+                    className="clickable"
+                    onClick={() => onNavigate(`library?book=${book.id}`)}
+                  >
                     <td>
                       <div className="cover-row">
                         <BookCover bookId={book.id} title={book.title} size={40} />
