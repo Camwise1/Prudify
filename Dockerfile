@@ -17,6 +17,14 @@ RUN mkdir -p /backend/prudify/static && npm run build
 FROM python:3.11-slim AS runtime
 
 # ffmpeg does the audio work; libgomp is required by CTranslate2 (faster-whisper).
+#
+# /config and /work are created here rather than left to a volume mount.
+# `useradd -d` names a home directory; it does not create one. Without these
+# the image has no /config, and because the entrypoint drops to an
+# unprivileged user, the first thing the service does -- create its data
+# directory -- fails with EACCES at the root of the filesystem. Mounting a
+# volume hides the fault, since Docker creates the mount point for you; a
+# plain `docker run` with no volumes cannot start at all.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ffmpeg \
@@ -24,7 +32,9 @@ RUN apt-get update \
         tini \
         gosu \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd -u 1000 -U -d /config -s /usr/sbin/nologin prudify
+    && useradd -u 1000 -U -d /config -s /usr/sbin/nologin prudify \
+    && mkdir -p /config /work \
+    && chown prudify:prudify /config /work
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
