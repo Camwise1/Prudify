@@ -718,19 +718,45 @@ def run_ffmpeg(
         raise OperationCancelled("Cancelled")
 
     if process.returncode != 0:
+        # ffmpeg dying because the whole process group was signalled is not a
+        # render failure, and reporting it as one is actively harmful: the
+        # book is marked FAILED and its nearly-finished render thrown away,
+        # when the truth is that the container was being stopped. `tini -g`
+        # forwards SIGTERM to every child, so ffmpeg is hit directly and dies
+        # before the poll loop above notices the shutdown. Ask again, now.
+        if cancel and cancel():
+            raise OperationCancelled("Cancelled")
+
         tail = "\n".join("".join(stderr_tail).strip().splitlines()[-25:])
         # Put the tail in the message too. It was previously only on the
         # exception's .stderr attribute, which nothing printed -- so a failed
         # render surfaced as a bare exit code and nothing to diagnose it with.
-        summary = f"ffmpeg exited with code {process.returncode}"
+        # A negative code is POSIX for "killed by signal N"; ffmpeg also
+        # exits 255 when it handles SIGTERM itself and says so on the way out.
+        # Both mean something outside this process made the decision, and
+        # saying which signal turns a mystery into a one-line diagnosis:
+        # 15 is a stop or redeploy, 9 is usually the OOM killer.
+        signalled = -process.returncode if process.returncode < 0 else None
+        if signalled is None and "received signal" in "".join(stderr_tail):
+            signalled = 15
+        if signalled is not None:
+            summary = (
+                f"ffmpeg was terminated by signal {signalled} -- it did not "
+                f"fail on its own. The usual causes are the container being "
+                f"stopped or restarted, or the kernel running out of memory."
+            )
+        else:
+            summary = f"ffmpeg exited with code {process.returncode}"
+            if not tail:
+                # Only meaningful when nothing chose to end the process. Said
+                # of a signalled run it contradicts the line above it.
+                summary = (
+                    f"{summary} (no output captured -- the process most likely "
+                    f"crashed rather than exiting with an error)\n"
+                    f"command: {' '.join(full_cmd)}"
+                )
         if tail:
             summary = f"{summary}\n\nffmpeg said:\n{tail}"
-        else:
-            summary = (
-                f"{summary} (no output captured -- the process most likely "
-                f"crashed rather than exiting with an error)\n"
-                f"command: {' '.join(full_cmd)}"
-            )
         raise FFmpegError(summary, tail, process.returncode)
 
 

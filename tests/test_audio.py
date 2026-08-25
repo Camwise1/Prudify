@@ -209,3 +209,61 @@ class TestFilterScriptArgs:
         """Git snapshots print a date, not a version -- and they are recent."""
         monkeypatch.setattr(audio_mod, "ffmpeg_major_version", lambda: 0)
         assert audio_mod.filter_script_args(Path("g.txt")) == ["-/filter_complex", "g.txt"]
+
+
+class TestSignalledFfmpegIsNotAFailure:
+    """A redeploy killed ffmpeg seconds from done and the book was marked FAILED.
+
+    `tini -g` forwards SIGTERM to every child, so ffmpeg dies before the poll
+    loop notices the shutdown. Reported as a render failure, that discards a
+    finished encode and leaves a traceback where "we stopped the container"
+    belongs.
+    """
+
+    def _sleeper(self):
+        return [
+            FFMPEG, "-v", "error", "-y", "-f", "lavfi",
+            "-i", "sine=frequency=300:duration=30", "-f", "null", "-",
+        ]
+
+    def test_a_cancelled_run_raises_cancellation_not_ffmpeg_error(self):
+        from prudify.core.audio import run_ffmpeg
+        from prudify.core.cancel import OperationCancelled
+
+        with pytest.raises(OperationCancelled):
+            run_ffmpeg(self._sleeper(), cancel=lambda: True)
+
+    def test_a_run_killed_from_outside_is_read_as_cancellation(self, monkeypatch):
+        """The race this actually hit: ffmpeg is already dead when we look."""
+        import subprocess
+
+        from prudify.core.audio import run_ffmpeg
+        from prudify.core.cancel import OperationCancelled
+
+        started = {}
+
+        def cancel():
+            # False while ffmpeg is alive, True once it is not -- exactly the
+            # ordering a group signal produces, where the process is already
+            # gone by the time the exit code is examined.
+            process = started.get("process")
+            return process is not None and process.poll() is not None
+
+        real_popen = subprocess.Popen
+
+        def popen(cmd, **kwargs):
+            process = real_popen(cmd, **kwargs)
+            process.terminate()  # stand in for tini forwarding the signal
+            started["process"] = process
+            return process
+
+        monkeypatch.setattr(subprocess, "Popen", popen)
+        with pytest.raises(OperationCancelled):
+            run_ffmpeg(self._sleeper(), cancel=cancel)
+
+    def test_a_genuine_failure_still_reports_as_one(self):
+        from prudify.core.audio import FFmpegError, run_ffmpeg
+
+        with pytest.raises(FFmpegError):
+            run_ffmpeg([FFMPEG, "-v", "error", "-i", "/nonexistent.m4b", "-f", "null", "-"])
+

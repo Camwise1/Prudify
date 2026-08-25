@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -43,6 +45,7 @@ async def lifespan(app: FastAPI):
     queue = init_queue(config)
     queue.start()
     app.state.queue = queue
+    _stop_claiming_on_signal(queue)
 
     use_polling = os.environ.get("PRUDIFY_POLLING_WATCHER", "").lower() in {"1", "true", "yes"}
     watcher = init_watcher(config, use_polling=use_polling)
@@ -83,6 +86,45 @@ async def lifespan(app: FastAPI):
         watcher.stop()
         queue.stop()
         stop_db_logging()
+
+
+def _stop_claiming_on_signal(queue) -> None:
+    """Set the queue's stop flag as soon as the process is asked to exit.
+
+    Without this there is a window between the signal and the lifespan
+    shutdown -- uvicorn drains connections first, and a long-lived SSE stream
+    from an open browser tab can hold that open for the whole grace period --
+    during which the worker cheerfully claims the next book. Meanwhile
+    ``tini -g`` has already forwarded the signal to ffmpeg, so the part that
+    *was* running dies without the queue understanding why.
+
+    The previous handler is chained rather than replaced: uvicorn installs its
+    own, and swallowing it would leave a container that never shuts down.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        return  # signal.signal is only legal on the main thread
+
+    for name in ("SIGTERM", "SIGINT"):
+        signum = getattr(signal, name, None)
+        if signum is None:
+            continue
+        previous = signal.getsignal(signum)
+
+        def handler(received, frame, _previous=previous, _name=name):
+            log.info("Received %s -- finishing the current step and stopping", _name)
+            queue.request_stop()
+            if callable(_previous):
+                _previous(received, frame)
+            elif _previous == signal.SIG_DFL:
+                # Nothing else would stop the process; restore the default
+                # disposition and let the signal do what it came to do.
+                signal.signal(received, signal.SIG_DFL)
+                signal.raise_signal(received)
+
+        try:
+            signal.signal(signum, handler)
+        except (ValueError, OSError):  # not supported on this platform
+            continue
 
 
 def _startup_scan(config: Config) -> None:

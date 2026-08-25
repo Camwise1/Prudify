@@ -109,6 +109,17 @@ class JobQueue:
             self._threads.append(thread)
         log.info("Job queue started with %d worker(s)", count)
 
+    def request_stop(self) -> None:
+        """Stop claiming new work, and tell running work to wind up.
+
+        Separate from :meth:`stop`, which also waits for the workers. This is
+        what a signal handler can safely call: it must return promptly, and
+        setting the event is all that is needed for the worker loop to stop
+        claiming parts and for in-flight ffmpeg runs to read the cancellation.
+        """
+        self._stop.set()
+        self._wake.set()
+
     def stop(self, timeout: float = 10.0) -> None:
         self._stop.set()
         self._wake.set()
