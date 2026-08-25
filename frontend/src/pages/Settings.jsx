@@ -644,7 +644,7 @@ function LibrariesTab({ libraries, onReload, onEdit, onSaved }) {
         <button
           className="primary"
           onClick={() =>
-            onEdit({ name: 'Audiobooks', source_path: '', output_path: '', enabled: true, auto_process: true })
+            onEdit({ name: 'Audiobooks', source_path: '', output_path: '', enabled: true, auto_process: true, layout: 'books' })
           }
         >
           Add library
@@ -681,6 +681,7 @@ function LibrariesTab({ libraries, onReload, onEdit, onSaved }) {
               </div>
               <div className="flex wrap">
                 <span className="tag">
+                  {library.layout === 'episodes' ? 'episodes · ' : ''}
                   {library.auto_process ? 'auto-processes new books' : 'manual only'}
                 </span>
                 <div className="spacer" />
@@ -721,6 +722,7 @@ function LibraryModal({ library, onClose, onSaved }) {
     output_path: library.output_path || '',
     enabled: library.enabled !== false,
     auto_process: library.auto_process !== false,
+    layout: library.layout || 'books',
     extensions: library.extensions || [],
     exclude_patterns: library.exclude_patterns || [],
   })
@@ -793,6 +795,18 @@ function LibraryModal({ library, onClose, onSaved }) {
         checked={form.auto_process}
         onChange={(value) => setForm({ ...form, auto_process: value })}
       />
+      <Field
+        label="Layout"
+        hint="Books: a folder is one work, split into parts. Episodes: a folder is a show and every file is cleaned on its own -- use this for podcasts."
+      >
+        <select
+          value={form.layout}
+          onChange={(e) => setForm({ ...form, layout: e.target.value })}
+        >
+          <option value="books">Books (audiobooks)</option>
+          <option value="episodes">Episodes (podcasts)</option>
+        </select>
+      </Field>
       <Field
         label="Only these extensions"
         hint="Comma separated, e.g. .m4b,.mp3. Leave blank for all supported formats."

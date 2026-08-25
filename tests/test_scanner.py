@@ -213,3 +213,62 @@ def test_multipart_detection():
     # Distinct titles are distinct books.
     assert not scanner._looks_multipart(["Aftermath", "Columbus Day"])
     assert not scanner._looks_multipart(["Book One", "Something Else"])
+
+
+class TestEpisodicLayout:
+    """Podcasts: a folder is a show, and every file stands on its own."""
+
+    @pytest.fixture
+    def show(self, tmp_path):
+        folder = tmp_path / "src" / "Podcasts" / "Hardcore History"
+        folder.mkdir(parents=True)
+        for name in (
+            "Blueprint for Armageddon I.mp3",
+            "Blueprint for Armageddon II.mp3",
+            "Prophets of Doom.mp3",
+        ):
+            (folder / name).write_bytes(b"\0" * 128)
+        return tmp_path / "src"
+
+    def _library(self, source, tmp_path, layout):
+        return LibrarySettings(
+            name="pods",
+            source_path=str(source),
+            output_path=str(tmp_path / "clean"),
+            layout=layout,
+        )
+
+    def test_every_episode_is_its_own_item(self, show, tmp_path):
+        books = list(scanner.scan_library(self._library(show, tmp_path, "episodes")))
+        assert len(books) == 3
+        assert all(book.part_count == 1 for book in books)
+        assert {b.title for b in books} == {
+            "Blueprint for Armageddon I",
+            "Blueprint for Armageddon II",
+            "Prophets of Doom",
+        }
+
+    def test_the_show_is_the_author(self, show, tmp_path):
+        books = list(scanner.scan_library(self._library(show, tmp_path, "episodes")))
+        assert {b.author for b in books} == {"Hardcore History"}
+
+    def test_each_episode_gets_a_distinct_key(self, show, tmp_path):
+        books = list(scanner.scan_library(self._library(show, tmp_path, "episodes")))
+        assert len({b.key for b in books}) == 3
+
+    def test_a_new_episode_does_not_disturb_the_others(self, show, tmp_path):
+        library = self._library(show, tmp_path, "episodes")
+        before = {b.title: b.key for b in scanner.scan_library(library)}
+        (show / "Podcasts" / "Hardcore History" / "Supernova in the East I.mp3").write_bytes(
+            b"\0" * 128
+        )
+        after = {b.title: b.key for b in scanner.scan_library(library)}
+        assert len(after) == 4
+        assert all(after[title] == key for title, key in before.items())
+
+    def test_the_same_folder_as_books_is_one_multipart_item(self, show, tmp_path):
+        """The default is unchanged: differently-titled MP3s stay one work."""
+        books = list(scanner.scan_library(self._library(show, tmp_path, "books")))
+        assert len(books) == 1
+        assert books[0].part_count == 3
+

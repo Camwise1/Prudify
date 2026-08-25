@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -124,6 +124,7 @@ class LibraryIn(BaseModel):
     output_path: str
     enabled: bool = True
     auto_process: bool = True
+    layout: Literal["books", "episodes"] = "books"
     extensions: list[str] = Field(default_factory=list)
     exclude_patterns: list[str] = Field(default_factory=list)
 

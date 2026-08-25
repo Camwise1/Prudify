@@ -61,13 +61,23 @@ def _looks_multipart(stems: list[str]) -> bool:
     return len(bases) == 1
 
 
-def _group_into_books(audio_files: list[Path]) -> list[list[Path]]:
-    """Split one folder's audio files into one list per distinct book.
+def _group_into_books(
+    audio_files: list[Path], layout: str = "books"
+) -> list[list[Path]]:
+    """Split one folder's audio files into one list per distinct item.
 
     The old behaviour -- one folder is always one book -- silently merges a
     flat "Author/*.m4b" shelf into a single monstrous multi-part entry, and
     cleaning that would concatenate unrelated novels into one file.
+
+    An ``episodes`` library short-circuits all of this. A podcast folder is a
+    show, not a work: the episodes share a name prefix and a release cadence
+    and nothing else, and the heuristics below -- written to hold the parts of
+    one novel together -- would glue three hundred unrelated episodes into a
+    single job that succeeds or fails as a unit.
     """
+    if layout == "episodes":
+        return [[f] for f in audio_files]
     if len(audio_files) <= 1:
         return [audio_files]
     if _looks_multipart([f.stem for f in audio_files]):
@@ -214,11 +224,13 @@ def iter_library(library: LibrarySettings) -> Iterator[DiscoveredBook]:
         if _excluded(relative_folder, library.exclude_patterns):
             continue
 
-        groups = _group_into_books(audio_files)
-        # When one folder yields several books, each must be identified by its
+        groups = _group_into_books(audio_files, library.layout)
+        # When one folder yields several items, each must be identified by its
         # own file -- otherwise they all hash to the same key and overwrite one
-        # another in the database.
-        split_folder = len(groups) > 1
+        # another in the database. An episodic library always identifies by
+        # file, including a show that currently has a single episode: adding
+        # the second one must not change the first one's identity.
+        split_folder = len(groups) > 1 or library.layout == "episodes"
 
         for group in groups:
             parts: list[BookPart] = []
@@ -250,7 +262,11 @@ def iter_library(library: LibrarySettings) -> Iterator[DiscoveredBook]:
                 identity = relative_folder or folder.name
 
             title, author = _infer_title_author(
-                folder, relative_folder, parts, standalone=split_folder
+                folder,
+                relative_folder,
+                parts,
+                standalone=split_folder,
+                episodic=library.layout == "episodes",
             )
             yield DiscoveredBook(
                 library_id=library.id,
@@ -276,6 +292,7 @@ def _infer_title_author(
     relative_folder: str,
     parts: list[BookPart],
     standalone: bool = False,
+    episodic: bool = False,
 ) -> tuple[str, str]:
     """Prefer the Author/Title folder convention, fall back to embedded tags.
 
@@ -287,6 +304,14 @@ def _infer_title_author(
 
     if standalone:
         title = Path(parts[0].path).stem
+        if episodic:
+            # The show is the folder the episode sits in -- "Podcasts/Hardcore
+            # History/..." is the History show, not the Podcasts show. And no
+            # tag lookup: that is one ffprobe per file across the network on
+            # every rescan, which for a show with hundreds of episodes is the
+            # entire scan, to learn an episode title the filename already
+            # carries.
+            return title, segments[-1] if segments else ""
         author = segments[0] if segments else ""
         return _prefer_tags(parts, title, author)
 
