@@ -22,9 +22,11 @@ services:
     ports:
       - "8317:8317"
     environment:
-      # Whisper is CPU-bound. Give it what you can spare, but leave the host
-      # something -- this is the single biggest knob on processing speed.
-      OMP_NUM_THREADS: 4
+      # Whisper is CPU-bound, and Prudify now sizes its own transcription
+      # threads from the cores it can actually see -- including a container
+      # CPU limit, which os.cpu_count() ignores. Set this only to cap the
+      # maths libraries below that; leaving it unset uses the machine.
+      # OMP_NUM_THREADS: 4
       TZ: ${TZ:-Etc/UTC}
       # Match your media share's owner so Plex/Audiobookshelf can manage the
       # cleaned files, not just read them.

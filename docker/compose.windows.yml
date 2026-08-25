@@ -28,9 +28,10 @@ services:
       # a Windows host.
       PRUDIFY_WORK_DIR: /work
 
-      # Your Xeon D-1521 is 4 cores / 8 threads. Six leaves the machine
-      # usable while transcribing; raise to 8 if it is otherwise idle.
-      OMP_NUM_THREADS: 6
+      # Your Xeon D-1521 is 4 cores / 8 threads. Prudify sizes its own
+      # transcription threads now -- and honours the `cpus` limit below, so
+      # this only needs setting to cap the maths libraries further.
+      # OMP_NUM_THREADS: 6
 
       # SMB never delivers inotify events, so the filesystem watcher would sit
       # silent forever. Polling plus the scheduled rescan is what actually

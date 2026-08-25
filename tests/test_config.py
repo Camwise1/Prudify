@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 import yaml
 from prudify.config import (
@@ -99,3 +101,47 @@ def test_library_lookup_by_id():
     config = Config(libraries=[library])
     assert config.library_by_id(library.id) is library
     assert config.library_by_id("nope") is None
+
+
+class TestAvailableCpus:
+    """Four threads was a guess. On a 12 core machine it wastes two thirds."""
+
+    def test_leaves_a_core_free_on_a_large_machine(self, monkeypatch):
+        from prudify import config as config_mod
+
+        monkeypatch.setattr(config_mod.os, "cpu_count", lambda: 12)
+        monkeypatch.setattr(Path, "read_text", _raise_oserror)
+        assert config_mod.available_cpus() == 11
+
+    def test_uses_everything_on_a_small_one(self, monkeypatch):
+        from prudify import config as config_mod
+
+        monkeypatch.setattr(config_mod.os, "cpu_count", lambda: 2)
+        monkeypatch.setattr(Path, "read_text", _raise_oserror)
+        assert config_mod.available_cpus() == 2
+
+    def test_a_container_quota_wins_over_the_host_core_count(self, monkeypatch):
+        """os.cpu_count() reports the host's cores, which under a limit is a lie."""
+        from prudify import config as config_mod
+
+        monkeypatch.setattr(config_mod.os, "cpu_count", lambda: 64)
+        monkeypatch.setattr(Path, "read_text", lambda self, *a, **k: "400000 100000")
+        assert config_mod.available_cpus() == 4
+
+    def test_an_unlimited_quota_falls_back_to_the_core_count(self, monkeypatch):
+        from prudify import config as config_mod
+
+        monkeypatch.setattr(config_mod.os, "cpu_count", lambda: 8)
+        monkeypatch.setattr(Path, "read_text", lambda self, *a, **k: "max 100000")
+        assert config_mod.available_cpus() == 7
+
+    def test_the_setting_still_wins_when_it_is_set(self):
+        from prudify.config import TranscriptionSettings
+
+        assert TranscriptionSettings().cpu_threads == 0  # 0 means "decide for me"
+        assert TranscriptionSettings(cpu_threads=3).cpu_threads == 3
+
+
+def _raise_oserror(*_args, **_kwargs):
+    raise OSError("no cgroup here")
+

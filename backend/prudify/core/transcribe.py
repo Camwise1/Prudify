@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..config import TranscriptionSettings
+from ..config import TranscriptionSettings, available_cpus
 from . import audio as audio_mod
 from .cancel import OperationCancelled
 
@@ -155,11 +155,12 @@ class FasterWhisperTranscriber(Transcriber):
             ) from exc
 
         device, compute = self._resolve_device()
+        threads = self.settings.cpu_threads or available_cpus()
         key = (
             self.settings.model,
             device,
             compute,
-            self.settings.cpu_threads,
+            threads,
             self.settings.num_workers,
             self.settings.model_dir,
         )
@@ -171,13 +172,13 @@ class FasterWhisperTranscriber(Transcriber):
         self.unload()
         log.info(
             "Loading faster-whisper model=%s device=%s compute=%s threads=%s",
-            self.settings.model, device, compute, self.settings.cpu_threads,
+            self.settings.model, device, compute, threads,
         )
         model = WhisperModel(
             self.settings.model,
             device=device,
             compute_type=compute,
-            cpu_threads=self.settings.cpu_threads,
+            cpu_threads=threads,
             num_workers=self.settings.num_workers,
             download_root=self.settings.model_dir or None,
         )
@@ -285,7 +286,7 @@ class WhisperCppTranscriber(Transcriber):
                 str(binary),
                 "-m", str(model_path),
                 "-f", str(wav_path),
-                "-t", str(self.settings.cpu_threads),
+                "-t", str(self.settings.cpu_threads or available_cpus()),
                 "-l", self.settings.language or "auto",
                 "-ml", "1",           # one word per segment -> word timestamps
                 "-oj",                # JSON output
@@ -354,7 +355,7 @@ class OpenAIWhisperTranscriber(Transcriber):
         try:
             import torch
 
-            torch.set_num_threads(self.settings.cpu_threads)
+            torch.set_num_threads(self.settings.cpu_threads or available_cpus())
         except Exception:
             pass
 

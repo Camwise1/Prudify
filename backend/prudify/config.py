@@ -174,7 +174,12 @@ class TranscriptionSettings(BaseModel):
     # Voice-activity detection skips silence, which is a large speed win on
     # audiobooks and reduces hallucinated text in quiet passages.
     vad_filter: bool = True
-    cpu_threads: int = Field(default=4, ge=1, le=64)
+    # 0 means "as many as this machine has". Four was a safe guess on the
+    # box this was written on and a poor one everywhere else: on a 12 core
+    # laptop it leaves two thirds of the machine idle through the longest
+    # stage of the job, and the setting is buried enough that nobody thinks
+    # to raise it.
+    cpu_threads: int = Field(default=0, ge=0, le=64)
     num_workers: int = Field(default=1, ge=1, le=8)
     # 0 streams short files whole and automatically chunks long files. Set a
     # value in minutes to force a specific segment length.
@@ -372,6 +377,30 @@ def save_config(config: Config, path: Path | None = None) -> Path:
     except OSError:
         pass  # Windows, or a filesystem without POSIX modes
     return path
+
+
+def available_cpus() -> int:
+    """How many cores this process may actually use.
+
+    ``os.cpu_count()`` reports the *host's* cores, which inside a container
+    with a CPU limit is a fiction -- ask for twelve threads under a four-core
+    quota and the scheduler spends its time context-switching rather than
+    transcribing. cgroup v2 publishes the real quota, so prefer it when it is
+    set to anything other than "max".
+    """
+    limit = None
+    try:
+        quota, period = Path("/sys/fs/cgroup/cpu.max").read_text().split()
+        if quota != "max":
+            limit = max(1, int(int(quota) / int(period)))
+    except (OSError, ValueError):
+        pass
+
+    detected = os.cpu_count() or 1
+    if limit is not None:
+        detected = min(detected, limit)
+    # Leave a core for the rest of the machine once there are enough to spare.
+    return max(1, detected - 1) if detected > 4 else detected
 
 
 def writable_dir_error(path: Path) -> str | None:

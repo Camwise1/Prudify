@@ -45,7 +45,6 @@ ENV PYTHONUNBUFFERED=1 \
     # Keep Whisper models on the /config volume so they survive a container rebuild.
     HF_HOME=/config/models \
     XDG_CACHE_HOME=/config/cache \
-    OMP_NUM_THREADS=4 \
     # Ownership of files written to the clean library. Match your media
     # share's owner, or Plex/Audiobookshelf cannot manage the results.
     PUID=1000 \
