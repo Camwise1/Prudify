@@ -13,6 +13,14 @@ jobs:
   image:
     name: Publish container image
     runs-on: ubuntu-latest
+    # The `secrets` context is not available to `if:` conditions -- only to
+    # `with:` and `run:`. Lifting them into the job environment first is what
+    # makes "publish to Docker Hub only when it is configured" expressible at
+    # all; referring to secrets.* in a condition is a workflow parse error,
+    # not a false condition, so the whole file is rejected.
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -29,18 +37,18 @@ jobs:
       # GHCR alone, so a fork or a clone of this workflow does not fail on a
       # registry it has no account for.
       - name: Log in to Docker Hub
-        if: ${{ secrets.DOCKERHUB_TOKEN != '' }}
+        if: env.DOCKERHUB_TOKEN != ''
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
 
       - name: Decide which registries to publish to
         id: registries
         run: |
           images="ghcr.io/camwise1/prudify"
-          if [ -n "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
-            images="$images"$'\n'"docker.io/${{ secrets.DOCKERHUB_USERNAME }}/prudify"
+          if [ -n "$DOCKERHUB_TOKEN" ]; then
+            images="$images"$'\n'"docker.io/$DOCKERHUB_USERNAME/prudify"
           fi
           {
             echo "images<<EOF"
