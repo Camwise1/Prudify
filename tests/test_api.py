@@ -242,7 +242,8 @@ class TestStaticFileTraversal:
         "//config/config.yaml",
         "/..%2f..%2fetc%2fpasswd",
     ])
-    def test_traversal_never_escapes_the_static_tree(self, client, path):
+    def test_traversal_never_escapes_the_static_tree(self, app_client, path):
+        client, _config = app_client
         response = client.get(path)
         # Either the SPA shell or a 404 -- never file contents.
         assert response.status_code in (200, 404)

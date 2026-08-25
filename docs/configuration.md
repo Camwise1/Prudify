@@ -31,6 +31,18 @@ server:
   api_key: <generated>
   require_api_key: true
 
+auth:
+  # none | apikey | basic | forms | external
+  method: forms
+  # always | disabled_for_local
+  required: always
+  username: you
+  password_hash: scrypt$...      # never a plaintext password
+  session_lifetime_hours: 720
+  # method: external only. The identity header is ignored from anywhere else.
+  trusted_proxies: []
+  proxy_user_header: X-Forwarded-User
+
 libraries:
   - id: 3f2a19bc
     name: Audiobooks
@@ -92,6 +104,30 @@ processing:
   duration_tolerance_seconds: 1.0
 
 log_level: INFO
+```
+
+## Authentication
+
+`forms` is the default: a login page and a session cookie, the same shape the
+*arr applications use. `basic` uses the browser's own password prompt.
+`external` takes the username from a reverse-proxy header, which is how you
+put Authelia, Authentik or Keycloak in front of Prudify without Prudify
+needing to understand OIDC — note the header is only trusted from the
+networks listed in `trusted_proxies`, because otherwise anyone could send it.
+
+Whichever you choose, **the API key keeps working** for scripts, the CLI and
+Home Assistant. It travels in the `X-Api-Key` header.
+
+Upgrading an existing install does not change anything: a config file written
+before login existed keeps API-key authentication until you choose otherwise.
+
+Locked out? There is no email reset, because Prudify runs on your hardware and
+has no mail server. Shell access is the recovery path:
+
+```bash
+prudify auth set-password --username you
+prudify auth status
+prudify auth method none          # last resort on a trusted network
 ```
 
 ## The settings that actually matter

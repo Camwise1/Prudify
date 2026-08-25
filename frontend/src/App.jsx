@@ -7,6 +7,7 @@ import Queue from './pages/Queue.jsx'
 import Wordlists from './pages/Wordlists.jsx'
 import Settings from './pages/Settings.jsx'
 import Logs from './pages/Logs.jsx'
+import Login from './pages/Login.jsx'
 
 const NAV = [
   { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
@@ -45,7 +46,7 @@ function Shell() {
   const [status, setStatus] = useState(null)
   const [queue, setQueue] = useState(null)
   const [settings, setSettings] = useState(null)
-  const [needsKey, setNeedsKey] = useState(false)
+  const [auth, setAuth] = useState(null)   // null until /auth/status answers
   const [connected, setConnected] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -68,11 +69,30 @@ function Shell() {
       const [nextStatus, nextQueue] = await Promise.all([api.status(), api.queue()])
       setStatus(nextStatus)
       setQueue(nextQueue)
-      setNeedsKey(false)
+      setAuth((current) => (current?.authenticated ? current : { ...current, authenticated: true }))
     } catch (err) {
-      if (err.status === 401) setNeedsKey(true)
-      else if (err.status === 0) setConnected(false)
+      if (err.status === 401 || err.status === 503) {
+        // Session expired, or the server wants an account created. Re-ask the
+        // server what it needs rather than guessing from the status code.
+        try {
+          setAuth(await api.authStatus())
+        } catch {
+          setAuth({ authenticated: false, supports_login: true, needs_setup: false })
+        }
+      } else if (err.status === 0) setConnected(false)
     }
+  }, [])
+
+  // Ask the server how it wants to be authenticated before anything else.
+  useEffect(() => {
+    let cancelled = false
+    api
+      .authStatus()
+      .then((next) => { if (!cancelled) setAuth(next) })
+      .catch(() => {
+        if (!cancelled) setAuth({ authenticated: false, supports_login: true, needs_setup: false })
+      })
+    return () => { cancelled = true }
   }, [])
 
   const loadSettings = useCallback(async () => {
@@ -95,7 +115,7 @@ function Shell() {
   }, [refresh])
 
   useEffect(() => {
-    if (needsKey) return undefined
+    if (!auth?.authenticated) return undefined
     const source = openEventStream((type, data) => {
       if (type === 'job.progress') {
         setQueue((current) => {
@@ -119,10 +139,25 @@ function Shell() {
     source.onerror = () => setConnected(false)
     sourceRef.current = source
     return () => source.close()
-  }, [needsKey, refresh, toast])
+  }, [auth?.authenticated, refresh, toast])
 
-  if (needsKey) {
-    return <ApiKeyGate onSaved={() => { refresh(); loadSettings() }} />
+  // Wait for the server's answer rather than flashing a login form at
+  // someone who is already signed in.
+  if (auth === null) {
+    return <div className="login-shell"><div className="login-card muted">Loading…</div></div>
+  }
+
+  if (!auth.authenticated) {
+    return (
+      <Login
+        status={auth}
+        onAuthenticated={async () => {
+          setAuth(await api.authStatus().catch(() => ({ ...auth, authenticated: true })))
+          refresh()
+          loadSettings()
+        }}
+      />
+    )
   }
 
   const queueCount = (queue?.active?.length || 0) + (queue?.pending?.length || 0)
@@ -165,7 +200,22 @@ function Shell() {
           ) : (
             <div>{queue?.paused ? 'Queue paused' : 'Idle'}</div>
           )}
-          <div>{connected ? '● live' : '○ reconnecting…'}</div>
+          <div className="sidebar-foot-row">
+            <span>{connected ? '● live' : '○ reconnecting…'}</span>
+            {auth?.supports_login && auth?.username ? (
+              <button
+                className="linklike"
+                title={`Signed in as ${auth.username}`}
+                onClick={async () => {
+                  try { await api.logout() } catch { /* already gone */ }
+                  setApiKey('')
+                  setAuth({ ...auth, authenticated: false, username: '' })
+                }}
+              >
+                Sign out
+              </button>
+            ) : null}
+          </div>
         </div>
       </aside>
 
@@ -212,44 +262,3 @@ function Shell() {
   )
 }
 
-function ApiKeyGate({ onSaved }) {
-  const [key, setKey] = useState(getApiKey())
-  const [error, setError] = useState('')
-
-  const submit = async (event) => {
-    event.preventDefault()
-    setApiKey(key.trim())
-    try {
-      await api.status()
-      onSaved()
-    } catch (err) {
-      setError(err.status === 401 ? 'That key was not accepted.' : err.message)
-    }
-  }
-
-  return (
-    <div style={{ display: 'grid', placeItems: 'center', minHeight: '100vh', padding: 24 }}>
-      <form className="card" style={{ width: 'min(460px, 100%)' }} onSubmit={submit}>
-        <div className="brand" style={{ padding: 0, border: 'none', marginBottom: 14 }}>
-          <div className="brand-mark">P</div>
-          <div className="brand-name">Prudify</div>
-        </div>
-        <p className="dim" style={{ marginTop: 0 }}>
-          Enter the API key printed in the server log on startup. You can also find it in
-          <code> config.yaml</code> under <code>server.api_key</code>.
-        </p>
-        {error ? <Banner tone="error">{error}</Banner> : null}
-        <input
-          autoFocus
-          className="mono"
-          placeholder="API key"
-          value={key}
-          onChange={(event) => setKey(event.target.value)}
-        />
-        <button className="primary mt" type="submit" style={{ width: '100%' }}>
-          Connect
-        </button>
-      </form>
-    </div>
-  )
-}

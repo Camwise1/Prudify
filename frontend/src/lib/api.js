@@ -1,7 +1,22 @@
-// Thin API client. The key lives in localStorage because Prudify has no user
-// accounts -- it is a single-tenant service you run on your own network.
+// Thin API client.
+//
+// Browsers authenticate with an HttpOnly session cookie the server sets at
+// login, which is why there is no token in localStorage any more: script
+// cannot read an HttpOnly cookie, so an XSS bug cannot walk off with the
+// credential. Cookies are sent automatically, so state-changing requests
+// carry a CSRF token echoed from a readable companion cookie.
+//
+// An API key is still supported for people driving the API from a script or
+// from another host, and for the rare deployment left on `apikey` auth.
 
 const KEY_STORAGE = 'prudify.apiKey'
+const CSRF_COOKIE = 'prudify_csrf'
+const CSRF_HEADER = 'X-Prudify-CSRF'
+
+function readCookie(name) {
+  const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'))
+  return match ? decodeURIComponent(match[1]) : ''
+}
 
 export function getApiKey() {
   try {
@@ -40,6 +55,12 @@ export async function request(path, options = {}) {
   const headers = { ...(options.headers || {}) }
   const key = getApiKey()
   if (key) headers['X-Api-Key'] = key
+
+  const method = (options.method || 'GET').toUpperCase()
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+    const csrf = readCookie(CSRF_COOKIE)
+    if (csrf) headers[CSRF_HEADER] = csrf
+  }
   if (options.body !== undefined && !(options.body instanceof FormData)) {
     headers['Content-Type'] = 'application/json'
   }
@@ -49,6 +70,9 @@ export async function request(path, options = {}) {
     response = await fetch(url, {
       ...options,
       headers,
+      // Send the session cookie, including when the UI is served from a
+      // different origin during development.
+      credentials: 'same-origin',
       body:
         options.body !== undefined && !(options.body instanceof FormData)
           ? JSON.stringify(options.body)
@@ -76,6 +100,19 @@ export async function request(path, options = {}) {
 }
 
 export const api = {
+  // auth
+  authStatus: () => request('/auth/status'),
+  login: (username, password) =>
+    request('/auth/login', { method: 'POST', body: { username, password } }),
+  setupAccount: (username, password) =>
+    request('/auth/setup', { method: 'POST', body: { username, password } }),
+  logout: () => request('/auth/logout', { method: 'POST' }),
+  changePassword: (current_password, new_password, sign_out_everywhere = false) =>
+    request('/auth/password', {
+      method: 'POST',
+      body: { current_password, new_password, sign_out_everywhere },
+    }),
+
   // system
   status: () => request('/system/status'),
   about: () => request('/system/about'),

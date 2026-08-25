@@ -76,6 +76,59 @@ class ServerSettings(BaseModel):
         return f"/{value}" if value else ""
 
 
+class AuthSettings(BaseModel):
+    """How browsers authenticate. The API key is a separate, parallel credential.
+
+    The shape follows the *arr applications, because their users are this
+    project's users and the vocabulary is already familiar:
+
+    ``none``      no authentication at all
+    ``apikey``    the API key only -- what Prudify did before login existed
+    ``basic``     the browser's own username/password prompt
+    ``forms``     a login page and a session cookie (the default)
+    ``external``  identity comes from a reverse proxy header (Authelia et al)
+
+    Whatever is set here, a valid ``X-Api-Key`` is always accepted on the API
+    so scripts, the CLI and Home Assistant keep working -- again matching the
+    *arr behaviour.
+    """
+
+    method: Literal["none", "apikey", "basic", "forms", "external"] = "forms"
+
+    # The *arr "Authentication Required" setting. Skipping auth for private
+    # addresses is convenient on a trusted LAN and wrong behind a reverse
+    # proxy, where every request appears to come from the proxy itself.
+    required: Literal["always", "disabled_for_local"] = "always"
+
+    username: str = ""
+    # scrypt, from prudify.security. Never a plaintext password.
+    password_hash: str = ""
+
+    # Signing key for session cookies. Rotating it invalidates every session.
+    session_secret: str = Field(default_factory=lambda: secrets.token_hex(32))
+    # Bumped on password change or "sign out everywhere"; tokens carry the
+    # epoch they were issued under, which is what lets stateless cookies be
+    # revoked without a session table.
+    session_epoch: int = 1
+    session_lifetime_hours: int = Field(default=720, ge=1, le=8760)
+
+    # For method="external" only. The header is trusted *only* when the
+    # request arrives from one of these networks -- otherwise anyone could
+    # simply send the header themselves.
+    trusted_proxies: list[str] = Field(default_factory=list)
+    proxy_user_header: str = "X-Forwarded-User"
+
+    @property
+    def configured(self) -> bool:
+        """True when a login account exists."""
+        return bool(self.username and self.password_hash)
+
+    @property
+    def needs_setup(self) -> bool:
+        """True when a password-based method is selected but not set up yet."""
+        return self.method in ("basic", "forms") and not self.configured
+
+
 class LibrarySettings(BaseModel):
     """One watched source tree and where its cleaned copies are written."""
 
@@ -187,6 +240,7 @@ class ProcessingSettings(BaseModel):
 
 class Config(BaseModel):
     server: ServerSettings = Field(default_factory=ServerSettings)
+    auth: AuthSettings = Field(default_factory=AuthSettings)
     libraries: list[LibrarySettings] = Field(default_factory=list)
     transcription: TranscriptionSettings = Field(default_factory=TranscriptionSettings)
     filtering: FilterSettings = Field(default_factory=FilterSettings)
@@ -236,6 +290,7 @@ def load_config(path: Path | None = None) -> Config:
 
     if path.exists():
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        raw = _migrate_auth(raw)
         config = Config.model_validate(raw)
     else:
         config = Config()
@@ -269,6 +324,27 @@ def load_config(path: Path | None = None) -> Config:
     return config
 
 
+def _migrate_auth(raw: dict) -> dict:
+    """Give configs written before login existed an auth section.
+
+    An existing installation has no ``auth`` block, and defaulting it to
+    ``forms`` would lock the owner out of their own server on upgrade --
+    there is no account yet, and the credential they have is an API key.
+    So carry forward exactly what they had: API-key auth, or none if they
+    had turned it off. New installations get the ``forms`` default instead,
+    because they have no key to carry forward and a login page is a better
+    first-run experience than pasting a hex string.
+    """
+    if not isinstance(raw, dict) or "auth" in raw:
+        return raw
+    server = raw.get("server") or {}
+    raw = dict(raw)
+    raw["auth"] = {
+        "method": "apikey" if server.get("require_api_key", True) else "none"
+    }
+    return raw
+
+
 def save_config(config: Config, path: Path | None = None) -> Path:
     path = path or config_path(config.resolved_data_dir())
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -279,6 +355,12 @@ def save_config(config: Config, path: Path | None = None) -> Path:
         encoding="utf-8",
     )
     tmp.replace(path)
+    # Contains the API key and the password hash. On a bind-mounted volume the
+    # default 0644 makes both readable by every user on the host.
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass  # Windows, or a filesystem without POSIX modes
     return path
 
 

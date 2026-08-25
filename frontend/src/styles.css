@@ -810,3 +810,96 @@ tbody tr.clickable {
   .page { padding: 16px 14px 50px; }
   .topbar { padding: 12px 14px; }
 }
+
+/* --- authentication gate ------------------------------------------------ */
+
+.login-shell {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.login-card {
+  width: min(420px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.login-brand h1 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.login-brand p {
+  margin: 2px 0 0;
+  font-size: 13px;
+}
+
+.login-note {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--dim);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.login-error {
+  font-size: 13px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  border-radius: 8px;
+  padding: 9px 11px;
+}
+
+.login-submit {
+  margin-top: 4px;
+  width: 100%;
+  justify-content: center;
+}
+
+.sidebar-foot-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--dim);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.linklike:hover { color: var(--text); }
+
+/* Focus must remain visible: the inputs below deliberately drop the default
+   outline, so give keyboard users something in its place. */
+.login-card input:focus-visible,
+button:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

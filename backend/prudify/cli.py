@@ -302,3 +302,106 @@ def _fmt_size(size: int) -> str:
 
 if __name__ == "__main__":
     app()
+
+
+auth_app = typer.Typer(help="Manage the login account.", no_args_is_help=True)
+app.add_typer(auth_app, name="auth")
+
+
+@auth_app.command("set-password")
+def auth_set_password(
+    username: str = typer.Option(None, help="Username to set (keeps the current one if omitted)."),
+    password: str = typer.Option(
+        None,
+        prompt="New password",
+        hide_input=True,
+        confirmation_prompt=True,
+        help="Prompted for if not supplied. Avoid passing it on the command line -- it lands in your shell history.",
+    ),
+    sign_out: bool = typer.Option(
+        True, "--sign-out/--keep-sessions", help="Invalidate existing sessions."
+    ),
+) -> None:
+    """Create or reset the login account.
+
+    This is the way back in when you are locked out. Prudify runs on your own
+    hardware and has no email, so there is no self-service reset -- physical
+    or shell access to the server *is* the recovery mechanism.
+    """
+    from .security import hash_password
+
+    if len(password) < 8:
+        console.print("[bold red]Password must be at least 8 characters.[/]")
+        raise typer.Exit(code=1)
+
+    config = load_config()
+    if username:
+        config.auth.username = username.strip()
+    elif not config.auth.username:
+        console.print("[bold red]No username set. Pass --username.[/]")
+        raise typer.Exit(code=1)
+
+    config.auth.password_hash = hash_password(password)
+    if sign_out:
+        config.auth.session_epoch += 1
+    if config.auth.method in ("none", "apikey"):
+        config.auth.method = "forms"
+        console.print("Authentication method switched to [cyan]forms[/] (login page).")
+
+    save_config(config)
+    console.print(f"[bold green]Password set for[/] [cyan]{config.auth.username}[/]")
+    if sign_out:
+        console.print("Existing sessions were signed out.")
+
+
+@auth_app.command("method")
+def auth_method(
+    value: str = typer.Argument(
+        ..., help="none, apikey, basic, forms, or external."
+    ),
+) -> None:
+    """Change how browsers authenticate."""
+    allowed = {"none", "apikey", "basic", "forms", "external"}
+    if value not in allowed:
+        console.print(f"[bold red]Must be one of:[/] {', '.join(sorted(allowed))}")
+        raise typer.Exit(code=1)
+
+    config = load_config()
+    config.auth.method = value  # type: ignore[assignment]
+    save_config(config)
+    console.print(f"Authentication method is now [cyan]{value}[/]")
+    if value == "none":
+        console.print(
+            "[bold yellow]Warning:[/] anyone who can reach this port now has full access."
+        )
+    elif value in ("basic", "forms") and not config.auth.configured:
+        console.print("No account exists yet. Run [cyan]prudify auth set-password[/] next.")
+
+
+@auth_app.command("status")
+def auth_status_cmd() -> None:
+    """Show the current authentication configuration."""
+    config = load_config()
+    table = Table("Setting", "Value", show_edge=False)
+    table.add_row("Method", config.auth.method)
+    table.add_row("Required", config.auth.required)
+    table.add_row("Account", config.auth.username or "[dim]none[/]")
+    table.add_row("Password set", "yes" if config.auth.password_hash else "[dim]no[/]")
+    table.add_row("Session lifetime", f"{config.auth.session_lifetime_hours}h")
+    table.add_row("API key set", "yes" if config.server.api_key else "[dim]no[/]")
+    if config.auth.method == "external":
+        table.add_row("Trusted proxies", ", ".join(config.auth.trusted_proxies) or "[red]none[/]")
+        table.add_row("User header", config.auth.proxy_user_header)
+    console.print(table)
+    if config.auth.needs_setup:
+        console.print("\n[yellow]No account yet.[/] Open the web UI, or run "
+                      "[cyan]prudify auth set-password[/].")
+
+
+@auth_app.command("sign-out-everywhere")
+def auth_sign_out() -> None:
+    """Invalidate every existing session without changing the password."""
+    config = load_config()
+    config.auth.session_epoch += 1
+    save_config(config)
+    console.print("[bold green]All sessions signed out.[/]")

@@ -15,6 +15,7 @@ from ..db import db_session
 from ..models import Job, JobStatus
 from ..schemas import JobOut, QueueState
 from ..services.events import bus, format_sse
+from .deps import require_auth_stream
 from ..services.queue import get_queue
 
 router = APIRouter(prefix="/queue", tags=["queue"])
@@ -103,7 +104,7 @@ def clear(session: Session = Depends(db_session)) -> dict:
     return {"cleared": get_queue().clear_pending(session)}
 
 
-@router.get("/events")
+@router.get("/events", dependencies=[Depends(require_auth_stream)])
 async def events(request: Request) -> StreamingResponse:
     """Server-Sent Events stream of queue, job and library activity."""
     queue = bus.subscribe()

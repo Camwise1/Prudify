@@ -21,10 +21,21 @@ docker run -d \
   ghcr.io/camwise1/prudify:latest
 ```
 
-The API key is printed to the container log on first start:
+Then open <http://localhost:8317> and create your account. The first person
+to reach a fresh install is asked to choose a username and password — there is
+no key to copy out of a log, and nothing is exposed in the meantime.
+
+If you are ever locked out, the way back in is shell access to the server:
 
 ```bash
-docker logs prudify 2>&1 | grep "API key"
+docker exec -it prudify prudify auth set-password --username you
+```
+
+Scripts and the CLI authenticate with an API key instead, which keeps working
+whichever login method you choose:
+
+```bash
+docker exec prudify prudify config --reveal-key
 ```
 
 ### Volumes

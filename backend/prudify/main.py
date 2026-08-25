@@ -14,8 +14,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
-from .api import routes_books, routes_jobs, routes_settings, routes_system
-from .api.deps import require_api_key
+from .api import routes_auth, routes_books, routes_jobs, routes_settings, routes_system
+from .api.deps import require_auth
 from .config import Config, load_config
 from .db import init_db, session_scope
 from .logging_setup import configure_logging, start_db_logging, stop_db_logging, trim_logs
@@ -50,15 +50,21 @@ async def lifespan(app: FastAPI):
     app.state.watcher = watcher
 
     log.info("Prudify %s listening on %s:%s", __version__, config.server.host, config.server.port)
-    if config.server.require_api_key:
-        # Never log the key itself. The root logger writes to the console, to
-        # a rotating file on the config volume, AND to a database table that
-        # the API serves back at /api/v1/system/logs -- so logging it would
-        # publish the secret through the very interface it protects, and
-        # rotating the key would not remove the old one from the log table.
+    # Never log the API key or the password. The root logger writes to the
+    # console, to a file on the config volume, AND to a database table the API
+    # serves back at /api/v1/system/logs -- logging a secret there publishes it
+    # through the very interface it protects.
+    if config.auth.needs_setup:
         log.info(
-            "API key authentication is enabled. Reveal the key with: "
-            "prudify config --reveal-key"
+            "First run: open the web UI to create your account "
+            "(or run `prudify auth set-password`)."
+        )
+    elif config.auth.method == "none":
+        log.warning("Authentication is DISABLED. Anyone who can reach this port has full access.")
+    else:
+        log.info(
+            "Authentication: %s. API key for scripts: prudify config --reveal-key",
+            config.auth.method,
         )
     if not config.libraries:
         log.info("No libraries configured yet -- add one in Settings to get started.")
@@ -109,9 +115,13 @@ def create_app(config: Config | None = None) -> FastAPI:
             allow_headers=["*"],
         )
 
+    public = APIRouter(prefix=f"{config.server.url_base}/api/v1")
+    public.include_router(routes_auth.router)
+    app.include_router(public)
+
     api = APIRouter(
         prefix=f"{config.server.url_base}/api/v1",
-        dependencies=[Depends(require_api_key)],
+        dependencies=[Depends(require_auth)],
     )
     api.include_router(routes_books.router)
     api.include_router(routes_jobs.router)

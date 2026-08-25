@@ -460,7 +460,94 @@ export default function Settings({ settings, onSaved }) {
 
       {tab === 'security' ? (
         <div className="card">
-          <Field label="API key">
+          <Field
+            label="How browsers sign in"
+            hint="The API key below keeps working for scripts whichever you choose."
+          >
+            <select
+              value={draft.auth?.method || 'forms'}
+              onChange={(e) => update('auth', 'method', e.target.value)}
+            >
+              <option value="forms">Login page (recommended)</option>
+              <option value="basic">Browser password prompt</option>
+              <option value="apikey">API key only</option>
+              <option value="external">Reverse proxy header</option>
+              <option value="none">No authentication</option>
+            </select>
+          </Field>
+
+          {draft.auth?.method === 'none' ? (
+            <Banner tone="error">
+              Anyone who can reach this port has full access, including the
+              ability to read your API key and change settings. Only sensible
+              if something in front of Prudify is doing the authenticating.
+            </Banner>
+          ) : null}
+
+          {draft.auth?.method === 'external' ? (
+            <>
+              <Field
+                label="Trusted proxy networks"
+                hint="Comma-separated CIDRs. The identity header is ignored from anywhere else — without this, anyone could simply send the header themselves."
+              >
+                <input
+                  className="mono"
+                  placeholder="172.16.0.0/12, 192.168.1.0/24"
+                  value={(draft.auth?.trusted_proxies || []).join(', ')}
+                  onChange={(e) =>
+                    update(
+                      'auth',
+                      'trusted_proxies',
+                      e.target.value.split(',').map((s) => s.trim()).filter(Boolean)
+                    )
+                  }
+                />
+              </Field>
+              <Field label="Username header">
+                <input
+                  className="mono"
+                  value={draft.auth?.proxy_user_header || 'X-Forwarded-User'}
+                  onChange={(e) => update('auth', 'proxy_user_header', e.target.value)}
+                />
+              </Field>
+              {!(draft.auth?.trusted_proxies || []).length ? (
+                <Banner tone="error">
+                  No trusted networks set, so the header is refused from
+                  everywhere and nobody can sign in. Add your proxy's address.
+                </Banner>
+              ) : null}
+            </>
+          ) : null}
+
+          <Check
+            label="Skip authentication on the local network"
+            hint="Convenient on a trusted LAN. Wrong behind a reverse proxy, where every request appears to come from the proxy itself."
+            checked={draft.auth?.required === 'disabled_for_local'}
+            onChange={(value) =>
+              update('auth', 'required', value ? 'disabled_for_local' : 'always')
+            }
+          />
+
+          <Field
+            label="Stay signed in for"
+            hint="How long a session lasts before you have to sign in again."
+          >
+            <select
+              value={String(draft.auth?.session_lifetime_hours ?? 720)}
+              onChange={(e) =>
+                update('auth', 'session_lifetime_hours', Number(e.target.value))
+              }
+            >
+              <option value="24">1 day</option>
+              <option value="168">1 week</option>
+              <option value="720">30 days</option>
+              <option value="8760">1 year</option>
+            </select>
+          </Field>
+
+          <hr className="rule" />
+
+          <Field label="API key" hint="For scripts, the CLI and Home Assistant.">
             <input readOnly value={draft.server.api_key} className="mono" />
           </Field>
           <div className="flex mb">
@@ -483,12 +570,6 @@ export default function Settings({ settings, onSaved }) {
               Copy
             </button>
           </div>
-          <Check
-            label="Require the API key"
-            hint="Turn this off only behind an authenticating reverse proxy."
-            checked={draft.server.require_api_key}
-            onChange={(value) => update('server', 'require_api_key', value)}
-          />
           <div className="row">
             <Field label="Bind address" hint="Takes effect after a restart.">
               <input
