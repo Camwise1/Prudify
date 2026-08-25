@@ -35,6 +35,9 @@ _HEARTBEAT_SECONDS = 5.0
 # Below this, a publish per ffmpeg progress line is a few hundred events a
 # minute per job, all saying almost the same thing.
 _MIN_PUBLISH_INTERVAL = 1.0
+# After this long with the fraction unmoved, any extrapolation from it is
+# fiction and gets withheld.
+_STALE_PROGRESS_SECONDS = 30.0
 
 
 def _progress_payload(state: dict, now: float) -> dict:
@@ -49,9 +52,16 @@ def _progress_payload(state: dict, now: float) -> dict:
     started = state.get("stage_started_at") or now
     stage_elapsed = max(0.0, now - started)
     fraction = state.get("stage_fraction") or 0.0
+    moved_at = state.get("fraction_changed_at") or started
+    stalled = (now - moved_at) > _STALE_PROGRESS_SECONDS
 
+    # An estimate divided by a fraction that has stopped advancing does not
+    # decay towards zero -- it climbs, forever, because the elapsed time keeps
+    # growing while the denominator does not. A remaining time that gets
+    # further away the longer you wait is worse than no estimate at all, so
+    # once progress goes quiet the number is withheld and the UI says why.
     eta = None
-    if fraction > 0.02 and stage_elapsed > 1.0:
+    if fraction > 0.02 and stage_elapsed > 1.0 and not stalled:
         eta = stage_elapsed * (1.0 - fraction) / fraction
 
     payload = {
@@ -63,6 +73,7 @@ def _progress_payload(state: dict, now: float) -> dict:
     payload["stage_elapsed"] = round(stage_elapsed, 1)
     payload["elapsed"] = round(max(0.0, now - (state.get("started_at") or now)), 1)
     payload["stage_eta_seconds"] = round(eta, 1) if eta is not None else None
+    payload["stalled"] = stalled
     return payload
 
 
@@ -403,6 +414,7 @@ class JobQueue:
             "stage_fraction": 0.0,
             "started_at": now,
             "stage_started_at": now,
+            "fraction_changed_at": now,
             "updated_at": now,
         }
         bus.publish("job.started", self._active[job_id])
@@ -441,6 +453,8 @@ class JobQueue:
 
                 now = time.monotonic()
                 stage_changed = state.get("stage") != stage
+                if stage_changed or fraction != state.get("stage_fraction"):
+                    state["fraction_changed_at"] = now
                 if stage_changed:
                     # Each stage times itself. An ETA drawn from the whole job
                     # is dominated by transcription and tells you nothing about

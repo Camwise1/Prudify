@@ -165,6 +165,40 @@ def test_library_rejects_missing_source(app_client, tmp_path):
     assert response.status_code == 400
 
 
+def test_book_cover_is_served_and_cached(app_client):
+    client, config = app_client
+    client.post("/api/v1/books/scan")
+    book_id = client.get("/api/v1/books").json()["items"][0]["id"]
+
+    response = client.get(f"/api/v1/books/{book_id}/cover")
+    assert response.status_code == 200
+    # The fixture book is 4096 zero bytes, so it has no artwork -- the blank
+    # pixel is the right answer, and the absence must be remembered.
+    assert response.headers["content-type"].startswith("image/")
+    assert (config.cover_dir() / f"{book_id}.none").exists()
+
+
+def test_a_cover_for_a_missing_book_is_404(app_client):
+    client, _ = app_client
+    assert client.get("/api/v1/books/nope/cover").status_code == 404
+
+
+class TestExpectedOutputBytes:
+    """Feeds the fallback progress bar when ffmpeg reports out_time=N/A."""
+
+    def test_parses_a_kilobit_rate(self):
+        from prudify.core.audio import _expected_output_bytes
+
+        # 3600s at 128 kbit/s is 57.6 MB.
+        assert _expected_output_bytes(3600, "128k") == 57_600_000
+
+    def test_unparseable_rate_disables_the_fallback(self):
+        from prudify.core.audio import _expected_output_bytes
+
+        assert _expected_output_bytes(3600, "banana") == 0
+        assert _expected_output_bytes(0, "128k") == 0
+
+
 class TestProgressPayload:
     """A percentage that has not moved must still say the job is alive."""
 
@@ -200,7 +234,27 @@ class TestProgressPayload:
         from prudify.services.queue import _progress_payload
 
         # A quarter done after ten minutes means thirty minutes to go.
-        payload = _progress_payload(self._state(stage_fraction=0.25), now=1000.0)
+        payload = _progress_payload(
+            self._state(stage_fraction=0.25, fraction_changed_at=995.0), now=1000.0
+        )
+        assert payload["stage_eta_seconds"] == 1800.0
+
+    def test_a_stalled_stage_withholds_the_estimate(self):
+        """Otherwise the remaining time climbs the longer you wait."""
+        from prudify.services.queue import _progress_payload
+
+        state = self._state(stage_fraction=0.25, fraction_changed_at=400.0)
+        payload = _progress_payload(state, now=1000.0)
+        assert payload["stalled"] is True
+        assert payload["stage_eta_seconds"] is None
+        assert payload["stage_elapsed"] == 600.0
+
+    def test_a_moving_stage_keeps_its_estimate(self):
+        from prudify.services.queue import _progress_payload
+
+        state = self._state(stage_fraction=0.25, fraction_changed_at=995.0)
+        payload = _progress_payload(state, now=1000.0)
+        assert payload["stalled"] is False
         assert payload["stage_eta_seconds"] == 1800.0
 
     def test_the_heartbeat_thread_starts_with_the_queue(self, app_client):

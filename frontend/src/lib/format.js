@@ -18,7 +18,14 @@ export function jobActivity(job) {
   const bits = []
   if (job.message || job.stage) bits.push(job.message || job.stage)
   if (job.stage_elapsed > 5) bits.push(`${formatDuration(job.stage_elapsed)} in this stage`)
-  if (job.stage_eta_seconds > 0) bits.push(`~${formatDuration(job.stage_eta_seconds)} left`)
+  if (job.stage_eta_seconds > 0) {
+    bits.push(`~${formatDuration(job.stage_eta_seconds)} left`)
+  } else if (job.stalled) {
+    // Say that the estimate is missing and why. Silence here reads as a bug,
+    // and an estimate drawn from a fraction that has stopped moving would
+    // climb rather than fall -- worse than admitting we do not know.
+    bits.push('no progress reported yet')
+  }
   return bits.join(' · ')
 }
 

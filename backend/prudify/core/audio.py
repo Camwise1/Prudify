@@ -549,7 +549,13 @@ def render(
     stage_out = work_dir / f"render{audio_container or '.m4b'}"
     cmd += [str(stage_out)]
 
-    run_ffmpeg(cmd, progress=progress, total_duration=info.duration, cancel=cancel)
+    run_ffmpeg(
+        cmd,
+        progress=progress,
+        total_duration=info.duration,
+        cancel=cancel,
+        expected_bytes=_expected_output_bytes(info.duration, chosen_bitrate),
+    )
 
     if two_pass:
         stage_out = _attach_cover(
@@ -620,13 +626,78 @@ def _attach_cover(
     return output
 
 
+def extract_cover(source: Path, destination: Path, max_edge: int = 400) -> bool:
+    """Write the embedded cover art of ``source`` to ``destination`` as JPEG.
+
+    Returns False when the file has no cover, which is not an error -- plenty
+    of libraries have none. Scaled down on the way out: the artwork inside an
+    M4B is routinely 2400x2400, and a library page showing sixty of those at
+    full size would move a hundred megabytes to draw thumbnails.
+    """
+    # Best effort throughout. A thumbnail is decoration: a truncated download,
+    # an exotic container or a file that is not really audio must leave the
+    # page looking plain, never raise into a request handler.
+    try:
+        info = probe(source)
+    except Exception:  # noqa: BLE001
+        log.debug("Could not probe %s for cover art", source, exc_info=True)
+        return False
+    if not info.has_cover:
+        return False
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    scale = f"scale='min({max_edge},iw)':-1"
+    try:
+        run_ffmpeg(
+            [
+                ffmpeg_path(), "-hide_banner", "-nostdin", "-y",
+                "-i", str(source),
+                "-map", f"0:{info.cover_stream_index}",
+                "-frames:v", "1",
+                "-vf", scale,
+                "-f", "image2", str(destination),
+            ]
+        )
+    except Exception:  # noqa: BLE001
+        log.debug("Could not extract cover art from %s", source, exc_info=True)
+        return False
+    return destination.exists() and destination.stat().st_size > 0
+
+
+def _expected_output_bytes(duration: float, bitrate: str) -> int:
+    """Roughly how large the encoded audio will be, for fallback progress.
+
+    Only ever used to draw a progress bar, so being a few percent out is of no
+    consequence -- the bar reaching 100% slightly early beats a bar that never
+    moves.
+    """
+    if duration <= 0 or not bitrate:
+        return 0
+    text = bitrate.strip().lower().rstrip("bps")
+    multiplier = 1000 if text.endswith("k") else 1_000_000 if text.endswith("m") else 1
+    try:
+        bits_per_second = float(text.rstrip("km")) * multiplier
+    except ValueError:
+        return 0
+    return int(duration * bits_per_second / 8)
+
+
 def run_ffmpeg(
     cmd: Sequence[str],
     progress: Callable[[float], None] | None = None,
     total_duration: float = 0.0,
     cancel: Callable[[], bool] | None = None,
+    expected_bytes: int = 0,
 ) -> None:
-    """Run ffmpeg, translating ``-progress`` output into a 0..1 fraction."""
+    """Run ffmpeg, translating ``-progress`` output into a 0..1 fraction.
+
+    ``out_time`` is the natural source of that fraction, but ffmpeg does not
+    always have one to give: with an attached cover picture in the output it
+    can report ``out_time=N/A`` for the entire run, which is how an encode
+    ends up showing no progress at all from start to finish. ``total_size`` is
+    always reported, so when a size is known up front it serves as a fallback.
+    Audio at a fixed bitrate makes bytes an honest proxy for time.
+    """
     full_cmd = list(cmd)
     if progress and total_duration > 0:
         # Insert progress flags right after the binary.
@@ -668,6 +739,8 @@ def run_ffmpeg(
     drainer.start()
 
     stdout_error: list[BaseException] = []
+    saw_time: list[bool] = []
+    warned_no_time: list[bool] = []
 
     def _drain_stdout() -> None:
         if process.stdout is None:
@@ -681,7 +754,20 @@ def run_ffmpeg(
                     raw = line.split("=", 1)[1]
                     if raw.isdigit():
                         seconds = int(raw) / 1_000_000
+                        saw_time.append(True)
                         progress(min(1.0, seconds / total_duration))
+                elif line.startswith("total_size=") and expected_bytes > 0:
+                    raw = line.split("=", 1)[1]
+                    # Only once ffmpeg has proved it will not give us a
+                    # timestamp: a real out_time is always the better number.
+                    if raw.isdigit() and not saw_time:
+                        if not warned_no_time:
+                            log.warning(
+                                "ffmpeg is reporting out_time=N/A; estimating "
+                                "progress from output size instead"
+                            )
+                            warned_no_time.append(True)
+                        progress(min(1.0, int(raw) / expected_bytes))
         except BaseException as exc:  # noqa: BLE001 - surfaced after the process exits
             stdout_error.append(exc)
 
