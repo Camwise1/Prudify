@@ -6,10 +6,10 @@ import BookDetail from './BookDetail.jsx'
 
 const PAGE_SIZE = 50
 
-export default function Library({ refreshKey }) {
+export default function Library({ refreshKey, initialStatus = '' }) {
   const toast = useToast()
   const [query, setQuery] = useState('')
-  const [status, setStatus] = useState('')
+  const [status, setStatus] = useState(initialStatus)
   const [sort, setSort] = useState('author')
   const [order, setOrder] = useState('asc')
   const [page, setPage] = useState(1)
@@ -31,6 +31,13 @@ export default function Library({ refreshKey }) {
       setLoading(false)
     }
   }, [page, sort, order, query, status, toast])
+
+  // Arriving from a dashboard tile changes the filter under us; the page
+  // resets too, or you land on page 3 of a list that now has one page.
+  useEffect(() => {
+    setStatus(initialStatus)
+    setPage(1)
+  }, [initialStatus])
 
   useEffect(() => {
     const handle = setTimeout(load, query ? 250 : 0)

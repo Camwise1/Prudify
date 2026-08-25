@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../lib/api.js'
-import { formatBytes, formatDuration, relativeTime } from '../lib/format.js'
+import { formatBytes, formatDuration, jobActivity, relativeTime } from '../lib/format.js'
 import { Banner, Empty, Progress, Stat, StatusPill, useToast } from '../components/ui.jsx'
 
 export default function Dashboard({ status, queue, onNavigate, onRefresh }) {
@@ -71,16 +71,27 @@ export default function Dashboard({ status, queue, onNavigate, onRefresh }) {
         </Banner>
       ) : null}
 
-      <div className="grid cols-4 mb">
+      <div className="grid cols-5 mb">
         <Stat
           label="Books"
           value={stats.total_books ?? 0}
           sub={`${formatBytes(stats.total_bytes)} of source audio`}
+          title="Show everything in the library"
+          onClick={() => onNavigate('library')}
         />
         <Stat
           label="Cleaned"
           value={byStatus.cleaned ?? 0}
           sub={`${byStatus.new ?? 0} waiting, ${byStatus.failed ?? 0} failed`}
+          title="Show cleaned books"
+          onClick={() => onNavigate('library?status=cleaned')}
+        />
+        <Stat
+          label="Failed"
+          value={byStatus.failed ?? 0}
+          sub={`${byStatus.new ?? 0} waiting, ${byStatus.partial ?? 0} partial`}
+          title="Show books that failed"
+          onClick={() => onNavigate('library?status=failed')}
         />
         <Stat
           label="Instances silenced"
@@ -91,6 +102,8 @@ export default function Dashboard({ status, queue, onNavigate, onRefresh }) {
           label="Queue"
           value={active.length + pending.length}
           sub={queue?.paused ? 'Paused' : `${active.length} running, ${pending.length} waiting`}
+          title="Open the queue"
+          onClick={() => onNavigate('queue')}
         />
       </div>
 
@@ -120,8 +133,8 @@ export default function Dashboard({ status, queue, onNavigate, onRefresh }) {
                 <span className="pct">{Math.round((job.progress || 0) * 100)}%</span>
               </div>
               <Progress value={job.progress} />
-              <div className="flex faint" style={{ fontSize: 12 }}>
-                <span>{job.message || job.stage}</span>
+              <div className="flex faint job-timing" style={{ fontSize: 12 }}>
+                <span>{jobActivity(job)}</span>
                 {job.part_total > 1 ? (
                   <span className="spacer">
                     part {job.part_index} of {job.part_total}

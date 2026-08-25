@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../lib/api.js'
-import { formatDuration, relativeTime } from '../lib/format.js'
+import { formatDuration, jobActivity, relativeTime } from '../lib/format.js'
 import { Empty, Icon, Progress, StatusPill, Tabs, useToast } from '../components/ui.jsx'
 
 export default function Queue({ queue, onRefresh }) {
@@ -86,8 +86,8 @@ export default function Queue({ queue, onRefresh }) {
                     </button>
                   </div>
                   <Progress value={job.progress} />
-                  <div className="flex faint" style={{ fontSize: 12 }}>
-                    <span>{job.message || job.stage}</span>
+                  <div className="flex faint job-timing" style={{ fontSize: 12 }}>
+                    <span>{jobActivity(job)}</span>
                     {job.part_total > 1 ? (
                       <span className="spacer">
                         part {job.part_index} / {job.part_total}

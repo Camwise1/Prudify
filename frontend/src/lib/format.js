@@ -9,6 +9,19 @@ export function formatDuration(seconds) {
   return `${s}s`
 }
 
+export function jobActivity(job) {
+  // The percentage alone cannot distinguish slow from hung. Encoding a long
+  // book is a single ffmpeg run that can sit on one number for an hour, so
+  // what the reader actually needs is how long this *stage* has been going
+  // and, once there is enough to extrapolate from, how much is left.
+  if (!job) return ''
+  const bits = []
+  if (job.message || job.stage) bits.push(job.message || job.stage)
+  if (job.stage_elapsed > 5) bits.push(`${formatDuration(job.stage_elapsed)} in this stage`)
+  if (job.stage_eta_seconds > 0) bits.push(`~${formatDuration(job.stage_eta_seconds)} left`)
+  return bits.join(' · ')
+}
+
 export function formatClock(seconds) {
   if (seconds == null) return '—'
   const total = Math.max(0, Math.floor(seconds))

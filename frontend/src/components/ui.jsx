@@ -45,13 +45,25 @@ export function Progress({ value, slim }) {
   )
 }
 
-export function Stat({ label, value, sub }) {
+export function Stat({ label, value, sub, onClick, title }) {
+  // A tile that counts something should be a way of seeing it. Rendered as a
+  // real button when it leads somewhere, so it is keyboard reachable and
+  // announces itself, rather than a div with a click handler bolted on.
+  if (!onClick) {
+    return (
+      <div className="stat">
+        <div className="stat-label">{label}</div>
+        <div className="stat-value">{value}</div>
+        {sub ? <div className="stat-sub">{sub}</div> : null}
+      </div>
+    )
+  }
   return (
-    <div className="stat">
+    <button type="button" className="stat stat-link" onClick={onClick} title={title}>
       <div className="stat-label">{label}</div>
       <div className="stat-value">{value}</div>
       {sub ? <div className="stat-sub">{sub}</div> : null}
-    </div>
+    </button>
   )
 }
 

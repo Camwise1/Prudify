@@ -235,6 +235,10 @@ h1, h2, h3, h4 {
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
 }
 
+.grid.cols-5 {
+  grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+}
+
 .grid.cols-2 {
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 }
@@ -263,6 +267,31 @@ h1, h2, h3, h4 {
 .stat-sub {
   font-size: 12px;
   color: var(--text-dim);
+}
+
+/* A tile that leads somewhere is a button, so it needs the button styling
+   undone -- inherited font, left alignment, no chrome -- before it can look
+   like the tiles beside it. */
+button.stat.stat-link {
+  font: inherit;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+  transition: border-color 0.12s ease, transform 0.12s ease;
+}
+
+button.stat.stat-link:hover {
+  border-color: var(--accent, var(--text-dim));
+  transform: translateY(-1px);
+}
+
+button.stat.stat-link:focus-visible {
+  outline: 2px solid var(--accent, var(--text-dim));
+  outline-offset: 2px;
+}
+
+.job-timing {
+  font-variant-numeric: tabular-nums;
 }
 
 button,

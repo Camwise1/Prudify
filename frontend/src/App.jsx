@@ -28,8 +28,16 @@ const TITLES = {
 }
 
 function currentRoute() {
-  const hash = window.location.hash.replace(/^#\/?/, '')
+  const hash = window.location.hash.replace(/^#\/?/, '').split('?')[0]
   return NAV.some((item) => item.id === hash) ? hash : 'dashboard'
+}
+
+// A route may carry a filter -- "#/library?status=failed" -- so that the
+// dashboard tiles can be links to the thing they are counting rather than
+// numbers you then have to go and reproduce by hand.
+function routeParams() {
+  const query = window.location.hash.split('?')[1] || ''
+  return Object.fromEntries(new URLSearchParams(query))
 }
 
 export default function App() {
@@ -43,6 +51,7 @@ export default function App() {
 function Shell() {
   const toast = useToast()
   const [route, setRoute] = useState(currentRoute)
+  const [params, setParams] = useState(routeParams)
   const [status, setStatus] = useState(null)
   const [queue, setQueue] = useState(null)
   const [settings, setSettings] = useState(null)
@@ -54,12 +63,16 @@ function Shell() {
 
   const navigate = useCallback((next) => {
     window.location.hash = `#/${next}`
-    setRoute(next)
+    setRoute(next.split('?')[0])
+    setParams(routeParams())
     setSidebarOpen(false)
   }, [])
 
   useEffect(() => {
-    const handler = () => setRoute(currentRoute())
+    const handler = () => {
+      setRoute(currentRoute())
+      setParams(routeParams())
+    }
     window.addEventListener('hashchange', handler)
     return () => window.removeEventListener('hashchange', handler)
   }, [])
@@ -242,7 +255,9 @@ function Shell() {
         {route === 'dashboard' ? (
           <Dashboard status={status} queue={queue} onNavigate={navigate} onRefresh={refresh} />
         ) : null}
-        {route === 'library' ? <Library refreshKey={refreshKey} /> : null}
+        {route === 'library' ? (
+          <Library refreshKey={refreshKey} initialStatus={params.status || ''} />
+        ) : null}
         {route === 'queue' ? <Queue queue={queue} onRefresh={refresh} /> : null}
         {route === 'wordlists' ? (
           <Wordlists settings={settings} onSettingsSaved={loadSettings} />
