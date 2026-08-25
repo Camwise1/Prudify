@@ -144,6 +144,20 @@ class JobQueue:
             return True
         if job.status == JobStatus.RUNNING.value:
             self._cancelled.add(job_id)
+            state = self._active.get(job_id)
+            if state is not None:
+                state.update({"stage": "cancelling", "message": "Cancelling"})
+                bus.publish(
+                    "job.progress",
+                    {
+                        "job_id": job_id,
+                        "progress": state.get("progress", job.progress),
+                        "stage": "cancelling",
+                        "message": "Cancelling",
+                        "part_index": state.get("part_index"),
+                        "part_total": state.get("part_total"),
+                    },
+                )
             bus.publish("job.cancelling", {"job_id": job_id})
             return True
         return False

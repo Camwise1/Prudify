@@ -223,10 +223,10 @@ nssm start Prudify
 Or with the built-in `sc.exe` plus a scheduled task at boot, if you would
 rather not add a dependency.
 
-**A note for low-memory Windows boxes**: `faster-whisper` streams the file
-instead of allocating one tensor for the whole book, so the classic
-`DefaultCPUAllocator: not enough memory` failure from `openai-whisper` does not
-apply. If you are still tight, set *Chunk length* to 30 minutes in
+**A note for low-memory Windows boxes**: `faster-whisper` avoids the classic
+`DefaultCPUAllocator: not enough memory` failure from `openai-whisper`, and
+Prudify automatically chunks long books so cancellation and restarts stay
+responsive. If you are still tight, set *Chunk length* to 15 or 30 minutes in
 Settings → Transcription and keep the page file on a drive with room.
 
 ---

@@ -26,10 +26,17 @@ from typing import Any
 
 from ..config import TranscriptionSettings
 from . import audio as audio_mod
+from .cancel import OperationCancelled
 
 log = logging.getLogger(__name__)
 
 ProgressFn = Callable[[float, str], None]
+
+# Whole-file faster-whisper has one unavoidable blind spot: its initial audio
+# preparation/VAD step cannot observe Prudify's cancel flag. Long books use
+# automatic chunks so cancel, restart and memory pressure have bounded windows.
+_AUTO_CHUNK_ABOVE_SECONDS = 60 * 60
+_AUTO_CHUNK_MINUTES = 30
 
 
 @dataclass(slots=True)
@@ -104,7 +111,12 @@ class Transcriber:
     def __init__(self, settings: TranscriptionSettings) -> None:
         self.settings = settings
 
-    def transcribe(self, wav_path: Path, progress: ProgressFn | None = None) -> Transcript:
+    def transcribe(
+        self,
+        wav_path: Path,
+        progress: ProgressFn | None = None,
+        cancel: Callable[[], bool] | None = None,
+    ) -> Transcript:
         raise NotImplementedError
 
     def unload(self) -> None:
@@ -181,7 +193,14 @@ class FasterWhisperTranscriber(Transcriber):
 
             gc.collect()
 
-    def transcribe(self, wav_path: Path, progress: ProgressFn | None = None) -> Transcript:
+    def transcribe(
+        self,
+        wav_path: Path,
+        progress: ProgressFn | None = None,
+        cancel: Callable[[], bool] | None = None,
+    ) -> Transcript:
+        if cancel and cancel():
+            raise OperationCancelled("Cancelled")
         model = self._load()
         info_probe = audio_mod.probe(wav_path)
         total = info_probe.duration or 0.0
@@ -198,6 +217,8 @@ class FasterWhisperTranscriber(Transcriber):
 
         words: list[Word] = []
         for segment in segments:
+            if cancel and cancel():
+                raise OperationCancelled("Cancelled")
             for word in getattr(segment, "words", None) or []:
                 words.append(
                     Word(
@@ -236,7 +257,14 @@ def _cuda_available() -> bool:
 class WhisperCppTranscriber(Transcriber):
     name = "whisper-cpp"
 
-    def transcribe(self, wav_path: Path, progress: ProgressFn | None = None) -> Transcript:
+    def transcribe(
+        self,
+        wav_path: Path,
+        progress: ProgressFn | None = None,
+        cancel: Callable[[], bool] | None = None,
+    ) -> Transcript:
+        if cancel and cancel():
+            raise OperationCancelled("Cancelled")
         binary = self.settings.whisper_cpp_binary or shutil.which("whisper-cli") or shutil.which(
             "main"
         )
@@ -269,6 +297,8 @@ class WhisperCppTranscriber(Transcriber):
                 raise TranscriptionError(
                     f"whisper.cpp failed ({result.returncode}): {result.stderr[-2000:]}"
                 )
+            if cancel and cancel():
+                raise OperationCancelled("Cancelled")
 
             json_path = out_prefix.with_suffix(".json")
             if not json_path.exists():
@@ -308,7 +338,14 @@ class WhisperCppTranscriber(Transcriber):
 class OpenAIWhisperTranscriber(Transcriber):
     name = "openai-whisper"
 
-    def transcribe(self, wav_path: Path, progress: ProgressFn | None = None) -> Transcript:
+    def transcribe(
+        self,
+        wav_path: Path,
+        progress: ProgressFn | None = None,
+        cancel: Callable[[], bool] | None = None,
+    ) -> Transcript:
+        if cancel and cancel():
+            raise OperationCancelled("Cancelled")
         try:
             import whisper  # type: ignore
         except ImportError as exc:  # pragma: no cover
@@ -330,6 +367,8 @@ class OpenAIWhisperTranscriber(Transcriber):
             word_timestamps=True,
             verbose=False,
         )
+        if cancel and cancel():
+            raise OperationCancelled("Cancelled")
         words: list[Word] = []
         for segment in result.get("segments", []):
             for word in segment.get("words", []):
@@ -409,7 +448,16 @@ def transcribe_file(
     transcriber = get_transcriber(settings)
     info = audio_mod.probe(source)
 
-    if settings.chunk_minutes <= 0:
+    chunk_minutes = settings.chunk_minutes
+    if chunk_minutes <= 0 and info.duration > _AUTO_CHUNK_ABOVE_SECONDS:
+        chunk_minutes = _AUTO_CHUNK_MINUTES
+        log.info(
+            "Transcription duration %.1f hours; using automatic %s minute chunks",
+            info.duration / 3600,
+            chunk_minutes,
+        )
+
+    if chunk_minutes <= 0:
         wav = work_dir / "audio.wav"
         if not _usable_wav(wav, info.duration):
             wav.unlink(missing_ok=True)
@@ -418,16 +466,21 @@ def transcribe_file(
                 wav,
                 progress=(lambda f: progress(f * 0.15, "extracting")) if progress else None,
                 total_duration=info.duration,
+                cancel=cancel,
             )
+        if cancel and cancel():
+            raise OperationCancelled("Cancelled")
         transcript = transcriber.transcribe(
-            wav, progress=(lambda f, s: progress(0.15 + f * 0.85, s)) if progress else None
+            wav,
+            progress=(lambda f, s: progress(0.15 + f * 0.85, s)) if progress else None,
+            cancel=cancel,
         )
         transcript.duration = info.duration
         if not os.environ.get("PRUDIFY_KEEP_WAV"):
             wav.unlink(missing_ok=True)
         return transcript
 
-    chunk_seconds = settings.chunk_minutes * 60
+    chunk_seconds = chunk_minutes * 60
     overlap = settings.chunk_overlap_seconds
     total = info.duration
     chunk_count = max(1, int(total // chunk_seconds) + (1 if total % chunk_seconds else 0))
@@ -448,9 +501,13 @@ def transcribe_file(
         else:
             wav = work_dir / f"chunk-{index:04d}.wav"
             audio_mod.extract_pcm(
-                source, wav, start=read_start, duration=read_end - read_start
+                source,
+                wav,
+                start=read_start,
+                duration=read_end - read_start,
+                cancel=cancel,
             )
-            chunk = transcriber.transcribe(wav)
+            chunk = transcriber.transcribe(wav, cancel=cancel)
             wav.unlink(missing_ok=True)
             chunk_words = [
                 Word(

@@ -24,6 +24,7 @@ from ..config import Config
 from . import audio as audio_mod
 from . import matcher as matcher_mod
 from . import transcribe as transcribe_mod
+from .cancel import OperationCancelled
 
 log = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ _STAGE_WEIGHTS = {
 ProgressFn = Callable[[str, float, str], None]  # stage, 0..1 overall, message
 
 
-class PipelineCancelled(RuntimeError):
+class PipelineCancelled(OperationCancelled):
     pass
 
 
@@ -192,13 +193,16 @@ def clean_part(
         def t_progress(fraction: float, message: str) -> None:
             report("transcribing", fraction, message)
 
-        transcript = transcribe_mod.transcribe_file(
-            source,
-            config.transcription,
-            work_dir=work_dir / "transcribe",
-            progress=t_progress,
-            cancel=cancel,
-        )
+        try:
+            transcript = transcribe_mod.transcribe_file(
+                source,
+                config.transcription,
+                work_dir=work_dir / "transcribe",
+                progress=t_progress,
+                cancel=cancel,
+            )
+        except OperationCancelled as exc:
+            raise PipelineCancelled("Cancelled by user") from exc
         if config.processing.keep_transcripts:
             transcript.save(cache_path)
             result.transcript_path = str(cache_path)
@@ -264,24 +268,28 @@ def clean_part(
     def r_progress(fraction: float) -> None:
         report("rendering", fraction, "Encoding cleaned audio")
 
-    audio_mod.render(
-        source=source,
-        destination=destination,
-        info=info,
-        intervals=report_data.intervals,
-        mode=config.output.mode,
-        beep_frequency=config.output.beep_frequency,
-        beep_volume=config.output.beep_volume,
-        codec=config.output.audio_codec,
-        bitrate=config.output.bitrate,
-        sample_rate=config.output.sample_rate,
-        preserve_chapters=config.output.preserve_chapters,
-        preserve_cover=config.output.preserve_cover,
-        preserve_metadata=config.output.preserve_metadata,
-        extra_tags=extra_tags,
-        work_dir=work_dir / "render",
-        progress=r_progress,
-    )
+    try:
+        audio_mod.render(
+            source=source,
+            destination=destination,
+            info=info,
+            intervals=report_data.intervals,
+            mode=config.output.mode,
+            beep_frequency=config.output.beep_frequency,
+            beep_volume=config.output.beep_volume,
+            codec=config.output.audio_codec,
+            bitrate=config.output.bitrate,
+            sample_rate=config.output.sample_rate,
+            preserve_chapters=config.output.preserve_chapters,
+            preserve_cover=config.output.preserve_cover,
+            preserve_metadata=config.output.preserve_metadata,
+            extra_tags=extra_tags,
+            work_dir=work_dir / "render",
+            progress=r_progress,
+            cancel=cancel,
+        )
+    except OperationCancelled as exc:
+        raise PipelineCancelled("Cancelled by user") from exc
 
     # ---- validate ------------------------------------------------------
     report("validating", 0.0, "Validating output")

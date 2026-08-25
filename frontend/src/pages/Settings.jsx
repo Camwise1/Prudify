@@ -160,7 +160,7 @@ export default function Settings({ settings, onSaved }) {
             </Field>
             <Field
               label="Chunk length (minutes)"
-              hint="0 transcribes the whole file at once. Only raise this if you hit memory limits."
+              hint="0 auto-chunks long books. Set a number to force a specific segment length."
             >
               <input
                 type="number"

@@ -62,7 +62,7 @@ transcription:
   beam_size: 5
   vad_filter: true
   cpu_threads: 4
-  chunk_minutes: 0           # 0 = stream the whole file
+  chunk_minutes: 0           # 0 = auto; long files are chunked
   chunk_overlap_seconds: 2
   model_dir: ""
 

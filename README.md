@@ -33,8 +33,8 @@ that describes this honestly.
 
 - **Watches** one or more library folders and picks up new books automatically.
 - **Detects** the format per file — M4B, M4A, MP3, MP4, FLAC, OGG, Opus, WAV, WMA.
-- **Transcribes** with word-level timestamps via `faster-whisper`, which decodes
-  in bounded memory no matter how long the book is.
+- **Transcribes** with word-level timestamps via `faster-whisper`, chunking long
+  books automatically so memory use and cancellation stay bounded.
 - **Matches** against editable wordlists, with an allowlist that keeps
   Scunthorpe out of trouble.
 - **Silences** each hit (or beeps over it, or cuts it) with configurable padding.
@@ -169,11 +169,11 @@ Whisper dominates the runtime. Rough figures for a 15-hour audiobook on CPU:
 | `medium.en` | ~3.5 GB | ~18 h | Diminishing returns for this job |
 
 `faster-whisper` with `int8` on CPU uses roughly half the memory of
-`openai-whisper` and decodes several times faster. It streams the file rather
-than allocating one tensor for the whole book, which is what makes whole-file
-transcription safe on modest hardware — no chunking required. If you are
-running somewhere genuinely tight, Settings → Transcription → *Chunk length*
-falls back to segmented decoding with overlap handling and per-chunk resume.
+`openai-whisper` and decodes several times faster. Prudify transcribes short
+files whole and automatically chunks long books, so cancelling or restarting
+does not have to wait on a many-hour decode. Settings → Transcription →
+*Chunk length* can force a specific segment size with overlap handling and
+per-chunk resume.
 
 An NVIDIA GPU changes the picture entirely: `base.en` on CUDA is roughly
 real-time × 40.

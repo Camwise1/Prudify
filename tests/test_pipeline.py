@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import pytest
 from prudify.core import audio as audio_mod
-from prudify.core.pipeline import clean_part, transcript_cache_path
+from prudify.core.cancel import OperationCancelled
+from prudify.core.pipeline import PipelineCancelled, clean_part, transcript_cache_path
 from prudify.core.transcribe import Transcript, Word
 
 from .conftest import needs_ffmpeg, peak_db
@@ -180,6 +181,31 @@ def test_failed_validation_removes_broken_output(prepared, tmp_path, monkeypatch
 
     assert not outcome.ok
     assert "synthetic failure" in outcome.reason
+    assert not destination.exists()
+
+
+@needs_ffmpeg
+def test_cancel_signal_reaches_render(prepared, tmp_path, monkeypatch):
+    config, source = prepared
+    destination = tmp_path / "out" / "cancel.m4b"
+    asked_to_cancel = False
+
+    def cancel():
+        return asked_to_cancel
+
+    def fake_render(**kwargs):
+        nonlocal asked_to_cancel
+        render_cancel = kwargs["cancel"]
+        assert render_cancel is cancel
+        asked_to_cancel = True
+        assert render_cancel() is True
+        raise OperationCancelled("Cancelled")
+
+    monkeypatch.setattr(audio_mod, "render", fake_render)
+
+    with pytest.raises(PipelineCancelled):
+        clean_part(source, destination, config, tmp_path / "work", cancel=cancel)
+
     assert not destination.exists()
 
 

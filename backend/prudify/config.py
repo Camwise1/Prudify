@@ -169,8 +169,8 @@ class TranscriptionSettings(BaseModel):
     vad_filter: bool = True
     cpu_threads: int = Field(default=4, ge=1, le=64)
     num_workers: int = Field(default=1, ge=1, le=8)
-    # 0 streams the whole file (faster-whisper is memory-bounded). Set a value
-    # in minutes to force segmented decoding on very constrained machines.
+    # 0 streams short files whole and automatically chunks long files. Set a
+    # value in minutes to force a specific segment length.
     chunk_minutes: int = Field(default=0, ge=0, le=240)
     chunk_overlap_seconds: int = Field(default=2, ge=0, le=30)
     model_dir: str = ""

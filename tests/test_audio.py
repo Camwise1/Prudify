@@ -7,8 +7,9 @@ from pathlib import Path
 import pytest
 from prudify.core import audio as audio_mod
 from prudify.core.audio import Chapter
+from prudify.core.cancel import OperationCancelled
 
-from .conftest import needs_ffmpeg
+from .conftest import FFMPEG, needs_ffmpeg
 
 INTERVALS = [(10.0, 10.5), (30.0, 30.7)]
 
@@ -78,6 +79,51 @@ class TestCodecSelection:
     def test_bitrate_tracks_the_source(self):
         info = audio_mod.MediaInfo(path=None, bit_rate=64000, channels=1)  # type: ignore[arg-type]
         assert audio_mod.choose_bitrate(info) == "64k"
+
+
+class TestCancellation:
+    def test_extract_pcm_passes_cancel_to_ffmpeg(self, monkeypatch, tmp_path):
+        marker = object()
+        seen = {}
+
+        monkeypatch.setattr(audio_mod, "ffmpeg_path", lambda: "ffmpeg")
+
+        def fake_run_ffmpeg(cmd, progress=None, total_duration=0.0, cancel=None):
+            seen["cancel"] = cancel
+
+        monkeypatch.setattr(audio_mod, "run_ffmpeg", fake_run_ffmpeg)
+
+        audio_mod.extract_pcm(Path("input.m4b"), tmp_path / "out.wav", cancel=lambda: marker)
+
+        assert seen["cancel"]() is marker
+
+    @needs_ffmpeg
+    def test_run_ffmpeg_can_cancel_without_progress(self, tmp_path):
+        calls = 0
+
+        def cancel():
+            nonlocal calls
+            calls += 1
+            return calls >= 2
+
+        with pytest.raises(OperationCancelled):
+            audio_mod.run_ffmpeg(
+                [
+                    FFMPEG,
+                    "-hide_banner",
+                    "-nostdin",
+                    "-y",
+                    "-re",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=440:sample_rate=44100",
+                    "-t",
+                    "20",
+                    str(tmp_path / "cancel.wav"),
+                ],
+                cancel=cancel,
+            )
 
     def test_bitrate_has_a_sane_default(self):
         info = audio_mod.MediaInfo(path=None, bit_rate=0, channels=1)  # type: ignore[arg-type]

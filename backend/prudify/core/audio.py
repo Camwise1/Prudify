@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from collections import deque
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
@@ -32,6 +33,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from ..config import find_binary
+from .cancel import OperationCancelled
 
 log = logging.getLogger(__name__)
 
@@ -251,6 +253,7 @@ def extract_pcm(
     duration: float | None = None,
     progress: Callable[[float], None] | None = None,
     total_duration: float = 0.0,
+    cancel: Callable[[], bool] | None = None,
 ) -> Path:
     """Decode to 16-bit mono PCM WAV, the format every Whisper backend wants."""
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -269,7 +272,12 @@ def extract_pcm(
         "-f", "wav",
         str(destination),
     ]
-    run_ffmpeg(cmd, progress=progress, total_duration=total_duration or duration or 0.0)
+    run_ffmpeg(
+        cmd,
+        progress=progress,
+        total_duration=total_duration or duration or 0.0,
+        cancel=cancel,
+    )
     return destination
 
 
@@ -458,6 +466,7 @@ def render(
     extra_tags: dict[str, str] | None = None,
     work_dir: Path | None = None,
     progress: Callable[[float], None] | None = None,
+    cancel: Callable[[], bool] | None = None,
 ) -> Path:
     """Produce the cleaned file in a single ffmpeg pass."""
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -540,7 +549,7 @@ def render(
     stage_out = work_dir / f"render{audio_container or '.m4b'}"
     cmd += [str(stage_out)]
 
-    run_ffmpeg(cmd, progress=progress, total_duration=info.duration)
+    run_ffmpeg(cmd, progress=progress, total_duration=info.duration, cancel=cancel)
 
     if two_pass:
         stage_out = _attach_cover(
@@ -552,8 +561,11 @@ def render(
             preserve_metadata=preserve_metadata,
             preserve_chapters=preserve_chapters,
             extra_tags=extra_tags,
+            cancel=cancel,
         )
 
+    if cancel and cancel():
+        raise OperationCancelled("Cancelled")
     shutil.move(str(stage_out), str(destination))
     return destination
 
@@ -567,6 +579,7 @@ def _attach_cover(
     preserve_metadata: bool,
     preserve_chapters: bool,
     extra_tags: dict[str, str] | None,
+    cancel: Callable[[], bool] | None = None,
 ) -> Path:
     """Remux rendered audio with the original's cover, chapters and tags.
 
@@ -592,7 +605,7 @@ def _attach_cover(
         cmd += ["-f", _FORMAT_FOR_CONTAINER[container], "-movflags", "+faststart"]
     cmd += [str(output)]
 
-    run_ffmpeg(cmd)
+    run_ffmpeg(cmd, cancel=cancel)
     audio_path.unlink(missing_ok=True)
     return output
 
@@ -644,28 +657,55 @@ def run_ffmpeg(
     drainer = threading.Thread(target=_drain_stderr, name="ffmpeg-stderr", daemon=True)
     drainer.start()
 
-    try:
-        if progress and total_duration > 0 and process.stdout is not None:
+    stdout_error: list[BaseException] = []
+
+    def _drain_stdout() -> None:
+        if process.stdout is None:
+            return
+        try:
             for line in process.stdout:
+                if not (progress and total_duration > 0):
+                    continue
                 line = line.strip()
                 if line.startswith("out_time_us=") or line.startswith("out_time_ms="):
                     raw = line.split("=", 1)[1]
                     if raw.isdigit():
                         seconds = int(raw) / 1_000_000
                         progress(min(1.0, seconds / total_duration))
-                if cancel and cancel():
-                    process.terminate()
-                    raise FFmpegError("Cancelled")
-        elif process.stdout is not None:
-            # Nothing is parsing stdout, but it still has to be drained.
-            process.stdout.read()
-        process.wait()
+        except BaseException as exc:  # noqa: BLE001 - surfaced after the process exits
+            stdout_error.append(exc)
+
+    stdout_drainer = threading.Thread(
+        target=_drain_stdout, name="ffmpeg-stdout", daemon=True
+    )
+    stdout_drainer.start()
+
+    cancelled = False
+    try:
+        while process.poll() is None:
+            if cancel and cancel():
+                cancelled = True
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                raise OperationCancelled("Cancelled")
+            time.sleep(0.2)
     except Exception:
-        process.kill()
-        process.wait()
+        if process.poll() is None:
+            process.kill()
+            process.wait()
         raise
     finally:
+        stdout_drainer.join(timeout=5)
         drainer.join(timeout=5)
+
+    if stdout_error:
+        raise stdout_error[0]
+    if cancelled:
+        raise OperationCancelled("Cancelled")
 
     if process.returncode != 0:
         tail = "\n".join("".join(stderr_tail).strip().splitlines()[-25:])
