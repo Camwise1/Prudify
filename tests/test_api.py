@@ -222,3 +222,30 @@ def test_reset_never_touches_the_source(app_client, tmp_path):
 
     client.post(f"/api/v1/books/{book_id}/reset", params={"delete_output": True})
     assert source_file.exists()
+
+
+class TestStaticFileTraversal:
+    """Regression: the SPA catch-all served any file the process could read.
+
+    The route is unauthenticated by necessity -- the app shell must load
+    before anyone can log in -- and it joined the request path onto the static
+    directory with no containment check. `Path("/static") / "/config/x"`
+    discards the left side entirely, so `GET //config/config.yaml` returned
+    the config file, which holds the API key in cleartext. That is a full
+    authentication bypass, not merely a file read.
+    """
+
+    @pytest.mark.parametrize("path", [
+        "//etc/passwd",
+        "/../../etc/passwd",
+        "../../../../etc/passwd",
+        "//config/config.yaml",
+        "/..%2f..%2fetc%2fpasswd",
+    ])
+    def test_traversal_never_escapes_the_static_tree(self, client, path):
+        response = client.get(path)
+        # Either the SPA shell or a 404 -- never file contents.
+        assert response.status_code in (200, 404)
+        body = response.text
+        assert "root:x:0:0" not in body
+        assert "api_key" not in body

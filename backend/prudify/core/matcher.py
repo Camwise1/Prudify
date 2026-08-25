@@ -43,8 +43,15 @@ def normalize(text: str) -> str:
 
 
 def compact(text: str) -> str:
-    """Collapse a token to letters and digits only ("fucked-up" -> "fuckedup")."""
-    return re.sub(r"[^a-z0-9]", "", text)
+    """Collapse a token to letters and digits only ("fucked-up" -> "fuckedup").
+
+    Unicode-aware. The original ``[^a-z0-9]`` returned "" for any non-Latin
+    token, which was catastrophic rather than merely wrong: a Cyrillic rule
+    installed an empty-string key in the exact-match table, every Cyrillic
+    word compacted to "" as well, and so *every word in the book* matched.
+    A Russian or Greek wordlist silenced the entire audiobook.
+    """
+    return re.sub(r"[^\w]", "", text, flags=re.UNICODE)
 
 
 @dataclass(slots=True)
@@ -206,7 +213,12 @@ class ProfanityMatcher:
         for rule in self.rules:
             if rule.kind == "word":
                 self._exact.setdefault(rule.tokens[0], rule.raw)
-                self._exact.setdefault(compact(rule.tokens[0]), rule.raw)
+                # Defence in depth: never install an empty key. If compact()
+                # ever returns "" for an exotic script, an empty key would
+                # match every token whose compact form is also empty.
+                squashed_rule = compact(rule.tokens[0])
+                if squashed_rule:
+                    self._exact.setdefault(squashed_rule, rule.raw)
             elif rule.kind == "prefix":
                 self._prefixes.append((rule.tokens[0], rule.raw))
             elif rule.kind == "regex" and rule.pattern is not None:
@@ -249,7 +261,7 @@ class ProfanityMatcher:
         if self._allowed(base, squashed):
             return None
 
-        hit = self._exact.get(base) or self._exact.get(squashed)
+        hit = self._exact.get(base) or (self._exact.get(squashed) if squashed else None)
         if hit:
             return hit
 
@@ -292,7 +304,8 @@ class ProfanityMatcher:
                     if self._allowed(base, squashed):
                         ok = False
                         break
-                    if base != token and squashed != compact(token):
+                    token_squashed = compact(token)
+                    if base != token and not (squashed and squashed == token_squashed):
                         ok = False
                         break
                 if not ok:

@@ -32,7 +32,14 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{major}}
+            type=sha
+            # `is_default_branch` compares the ref against the default branch
+            # name, and on a tag push the ref is "refs/tags/vX.Y.Z" -- so it is
+            # always false and `latest` was never published, while every doc
+            # told people to pull it. A v* tag IS the release; tag it latest,
+            # excluding prereleases (v1.0.0-rc1 contains a hyphen).
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
 
       - uses: docker/build-push-action@v6
         with:

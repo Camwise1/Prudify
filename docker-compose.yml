@@ -7,38 +7,43 @@ services:
     build: .
     container_name: prudify
     restart: unless-stopped
+    # A running job needs time to stop cleanly; the default 10s guarantees a
+    # SIGKILL mid-render.
+    stop_grace_period: 60s
     ports:
       - "8317:8317"
     environment:
       # Whisper is CPU-bound. Give it what you can spare, but leave the host
       # something -- this is the single biggest knob on processing speed.
       OMP_NUM_THREADS: 4
-      TZ: America/Denver
+      TZ: ${TZ:-Etc/UTC}
+      # Match your media share's owner so Plex/Audiobookshelf can manage the
+      # cleaned files, not just read them.
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      UMASK: ${UMASK:-022}
+      # Scratch renders are multi-gigabyte. Keep them off the config bind
+      # mount and on a native volume.
+      PRUDIFY_WORK_DIR: /work
       # Uncomment on NFS/SMB mounts where inotify events never arrive. Prudify
       # also falls back on its scheduled rescan, so this is belt and braces.
       # PRUDIFY_POLLING_WATCHER: "1"
     volumes:
       # Config, database, logs, transcripts and downloaded models.
       - ./config:/config
+      - work:/work
       # Your existing library. Read-only: Prudify never writes here, and the
       # flag makes that guarantee enforceable rather than merely promised.
       - /path/to/audiobooks:/audiobooks:ro
       # Where cleaned copies are written. Point a second Audiobookshelf
       # library at this folder.
       - /path/to/audiobooks-clean:/audiobooks-clean
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8317/ping',timeout=4)"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
 
-  # Uncomment to use an NVIDIA GPU. Set Device to "cuda" in Settings afterwards.
-  # prudify-gpu:
-  #   extends: prudify
-  #   deploy:
-  #     resources:
-  #       reservations:
-  #         devices:
-  #           - driver: nvidia
-  #             count: 1
-  #             capabilities: [gpu]
+  # GPU acceleration is NOT supported by this image. It is built on
+  # python:3.11-slim with no CUDA runtime, cuBLAS or cuDNN, and the
+  # CTranslate2 wheels do not bundle them -- selecting "cuda" in Settings
+  # fails at model load, part-way into a job. A CUDA variant needs a separate
+  # image, and is not built yet. Transcription is CPU-only for now.
+
+volumes:
+  work:

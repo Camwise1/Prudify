@@ -324,8 +324,13 @@ class JobQueue:
                     part.status = BookStatus.FAILED.value
                     part.error = errors[-1] if errors else "Unknown error"
                 elif result.ok:
+                    # A dry run writes nothing, so it must not claim the part
+                    # is cleaned. Both branches of this ternary used to say
+                    # CLEANED, which turned a cautious "preview first" into a
+                    # library that reported itself fully processed with an
+                    # empty output folder.
                     part.status = (
-                        BookStatus.CLEANED.value if not result.skipped else BookStatus.CLEANED.value
+                        BookStatus.NEW.value if result.skipped else BookStatus.CLEANED.value
                     )
                     part.error = ""
                     part.match_count = result.match_count
@@ -405,6 +410,10 @@ class JobQueue:
                     book.status = BookStatus.FAILED.value
                 elif failed:
                     book.status = BookStatus.PARTIAL.value
+                elif skipped and not succeeded:
+                    # Every part was a dry run: matches were counted but
+                    # nothing was written, so the book is not cleaned.
+                    book.status = BookStatus.NEW.value
                 else:
                     book.status = BookStatus.CLEANED.value
                     book.cleaned_at = _utcnow()

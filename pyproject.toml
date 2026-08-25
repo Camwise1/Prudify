@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "prudify"
-version = "0.1.0"
+version = "1.0.0"
 description = "Self-hosted profanity filtering for audiobook libraries, with a web UI."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -52,8 +52,8 @@ dev = [
 prudify = "prudify.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/Camwise1/Prudify"
-Issues = "https://github.com/Camwise1/Prudify/issues"
+Homepage = "https://github.com/Camwise1/prudify"
+Issues = "https://github.com/Camwise1/prudify/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["backend/prudify"]

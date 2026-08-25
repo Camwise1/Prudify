@@ -107,7 +107,7 @@ running it as a service on each platform.
 ### From source
 
 ```bash
-git clone https://github.com/Camwise1/Prudify.git prudify && cd prudify
+git clone https://github.com/Camwise1/prudify.git prudify && cd prudify
 pip install -e ".[whisper,dev]"
 cd frontend && npm install && npm run build && cd ..
 prudify serve

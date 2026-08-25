@@ -211,3 +211,38 @@ class TestNeighbourGuard:
     def test_without_words_behaviour_is_unchanged(self):
         intervals = M.build_intervals(self._match(), pad_after_ms=100)
         assert intervals[0][1] == pytest.approx(1.10)
+
+
+class TestNonLatinWordlists:
+    """Regression: a non-Latin wordlist used to silence the entire book.
+
+    compact() was `[^a-z0-9]` and returned "" for any non-Latin token. A
+    Cyrillic rule therefore installed an empty-string key in the exact-match
+    table, every Cyrillic word compacted to "" as well, and every word in the
+    book matched. Silent, total destruction of the audio.
+    """
+
+    @staticmethod
+    def _matches(rules, sentence):
+        matcher = M.ProfanityMatcher(M.parse_wordlist(rules))
+        words = [Word(i, i + 0.5, t) for i, t in enumerate(sentence.split())]
+        return [m.text for m in matcher.find(words)]
+
+    def test_compact_preserves_non_latin(self):
+        assert M.compact("блядь") == "блядь"
+        assert M.compact("μαλάκας") == "μαλάκας"
+        assert M.compact("scheiße") == "scheiße"
+
+    def test_cyrillic_rule_does_not_match_innocent_words(self):
+        assert self._matches(["блядь"], "привет мама я дома хорошо") == []
+
+    def test_cyrillic_rule_still_matches_its_own_word(self):
+        assert self._matches(["блядь"], "привет блядь дома") == ["блядь"]
+
+    def test_greek_rule_does_not_match_innocent_words(self):
+        assert self._matches(["μαλάκας"], "καλημέρα φίλε μου") == []
+
+    def test_english_behaviour_is_unchanged(self):
+        assert self._matches(["fuck"], "what the fuck was that") == ["fuck"]
+        assert self._matches(["fuckedup"], "totally fucked-up day") == ["fucked-up"]
+        assert self._matches(["cunt"], "he is from Scunthorpe") == []

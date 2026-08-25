@@ -51,7 +51,15 @@ async def lifespan(app: FastAPI):
 
     log.info("Prudify %s listening on %s:%s", __version__, config.server.host, config.server.port)
     if config.server.require_api_key:
-        log.info("API key: %s", config.server.api_key)
+        # Never log the key itself. The root logger writes to the console, to
+        # a rotating file on the config volume, AND to a database table that
+        # the API serves back at /api/v1/system/logs -- so logging it would
+        # publish the secret through the very interface it protects, and
+        # rotating the key would not remove the old one from the log table.
+        log.info(
+            "API key authentication is enabled. Reveal the key with: "
+            "prudify config --reveal-key"
+        )
     if not config.libraries:
         log.info("No libraries configured yet -- add one in Settings to get started.")
     else:
@@ -165,9 +173,24 @@ def _mount_frontend(app: FastAPI, config: Config) -> None:
             return JSONResponse({"detail": "Not found"}, status_code=404)
         # Serve real files when they exist (favicon, manifest); otherwise let
         # the client-side router handle the path.
-        candidate = STATIC_DIR / full_path
-        if full_path and candidate.is_file():
-            return FileResponse(candidate)
+        #
+        # This route is on `app`, not the API router, so it has no API-key
+        # dependency -- it is reachable unauthenticated by design, because the
+        # app shell has to load before anyone can log in. That makes the join
+        # below security-critical. `Path("/static") / "/config/config.yaml"`
+        # discards the left operand entirely, and neither uvicorn nor
+        # Starlette resolves ".." for us, so an unguarded join here hands out
+        # any file the process can read -- including config.yaml, which holds
+        # the API key in cleartext. Resolve first, then require the result to
+        # stay inside the static tree.
+        if full_path:
+            try:
+                candidate = (STATIC_DIR / full_path).resolve()
+                candidate.relative_to(STATIC_DIR.resolve())
+            except (ValueError, OSError):
+                return FileResponse(index)
+            if candidate.is_file():
+                return FileResponse(candidate)
         return FileResponse(index)
 
 
