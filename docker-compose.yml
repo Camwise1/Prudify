@@ -1,6 +1,9 @@
 services:
   prudify:
-    image: ${PRUDIFY_IMAGE:-ghcr.io/camwise1/prudify:latest}
+    # Docker Hub by default: it needs no login, and `docker pull` works the
+    # same everywhere. GHCR carries the identical image if you prefer it --
+    # note the namespace differs there (camwise1, not camwise).
+    image: ${PRUDIFY_IMAGE:-camwise/prudify:latest}
     # Build from this checkout when the image is not already present locally.
     # Remove this line once you are pulling a published image and would rather
     # a missing tag be an error than a silent 20-minute rebuild.

@@ -79,11 +79,16 @@ that describes this honestly.
 
 ### Docker (recommended)
 
+The image is published to Docker Hub as **`camwise/prudify`** and to GitHub
+Container Registry as **`ghcr.io/camwise1/prudify`**. They are the same build;
+Docker Hub needs no login, so the examples use it. Both carry `linux/amd64`
+and `linux/arm64`, so Apple Silicon and a Raspberry Pi work as-is.
+
 ```yaml
 # docker-compose.yml
 services:
   prudify:
-    image: ghcr.io/camwise1/prudify:latest
+    image: camwise/prudify:latest
     container_name: prudify
     restart: unless-stopped
     ports:

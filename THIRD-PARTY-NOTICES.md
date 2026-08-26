@@ -59,7 +59,7 @@ discharge the obligation:
 To confirm what a given image actually shipped:
 
 ```
-docker run --rm ghcr.io/camwise1/prudify:latest ffmpeg -version
+docker run --rm camwise/prudify:latest ffmpeg -version
 ```
 
 An LGPL FFmpeg build is possible (drop `--enable-gpl`, lose x264/x265, which

@@ -18,7 +18,7 @@ docker run -d \
   -v /path/to/audiobooks:/audiobooks:ro \
   -v /path/to/audiobooks-clean:/audiobooks-clean \
   --restart unless-stopped \
-  ghcr.io/camwise1/prudify:latest
+  camwise/prudify:latest
 ```
 
 Then open <http://localhost:8317> and create your account. The first person
