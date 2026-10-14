@@ -23,7 +23,8 @@ from ..core import audio as audio_mod
 from ..core.pipeline import PipelineCancelled, clean_part, pass_through_part, stage_fraction
 from ..core.reachability import check_dir
 from ..db import session_scope
-from ..models import Book, BookStatus, Job, JobStatus, Part
+from ..models import Book, BookStatus, Job, JobStatus, Part, Prescreen
+from . import prescreen as prescreen_mod
 from .events import bus
 
 log = logging.getLogger(__name__)
@@ -229,6 +230,8 @@ class JobQueue:
         # Why the queue paused itself, if it did. Separate from a pause the
         # user asked for: only this kind lifts itself when the cause clears.
         self._suspended: str | None = None
+        # Books the background pass has already checked against an ebook.
+        self._screened: set[str] = set()
         self._last_recheck = 0.0
 
     # -- lifecycle --------------------------------------------------------
@@ -346,6 +349,12 @@ class JobQueue:
     def is_paused(self) -> bool:
         return self._paused.is_set()
 
+    def settings_changed(self) -> None:
+        """Ebook folders or wordlists changed: earlier ebook checks may be stale."""
+        prescreen_mod.forget_index()
+        self._screened.clear()
+        self.notify()
+
     def notify(self) -> None:
         """Wake idle workers after new jobs are enqueued."""
         self._wake.set()
@@ -400,7 +409,48 @@ class JobQueue:
                 for book_id in book_ids:
                     if self._stop.is_set():
                         return
-                    _probe_book_durations(book_id)
+                    probe_book_durations(book_id)
+            if prescreen_mod.enabled(self.config):
+                try:
+                    self._prescreen_pending()
+                except Exception:  # pragma: no cover - a bad ebook must not stop the loop
+                    log.exception("Ebook check of the queue failed")
+
+    def _prescreen_pending(self) -> None:
+        """Check waiting books against their ebooks, and send clean ones to the copier.
+
+        Done ahead of time so a clean book is copied within minutes of being
+        queued instead of waiting its turn behind hours of transcription.
+        """
+        with session_scope() as session:
+            waiting = session.execute(
+                select(Job.id, Job.book_id, Job.result)
+                .where(Job.status == JobStatus.PENDING.value)
+                .order_by(Job.priority.asc(), Job.queued_at.asc())
+            ).all()
+        for job_id, book_id, result in waiting:
+            if self._stop.is_set():
+                return
+            if book_id in self._screened or (result or {}).get("mode", "clean") != "clean":
+                continue
+            self._screened.add(book_id)
+            probe_book_durations(book_id)
+            with session_scope() as session:
+                book = session.get(Book, book_id)
+                if book is None:
+                    continue
+                record = prescreen_mod.screen_book(session, self.config, book)
+                if not (self.config.prescreen.auto_mark_clean and prescreen_mod.is_clean(record)):
+                    continue
+                job = session.get(Job, job_id)
+                if job is None or job.status != JobStatus.PENDING.value:
+                    continue
+                job.result = {"mode": "copy", "reason": "ebook_clean"}
+                job.message = "Ebook has no matches; will copy unchanged"
+                session.commit()
+                log.info("%s: ebook has no matches; copying it unchanged", book.title)
+            bus.publish("job.queued", {"job_id": job_id, "book_id": book_id})
+            self._wake.set()
 
     def job_snapshot(self, job_id: int) -> dict | None:
         """Everything known about a running job, for the detail view."""
@@ -708,6 +758,7 @@ class JobQueue:
             book.status = BookStatus.PROCESSING.value
             job.part_total = len(parts)
             mode = job_mode(job)
+            reason = (job.result or {}).get("reason", "")
             title = book.title
             author = book.author
             library_id = book.library_id
@@ -727,7 +778,28 @@ class JobQueue:
         # Durations turn a fraction into a speed and an end time. A copy has
         # no use for them, and probing every part over a network share would
         # add more to it than the copy itself.
-        part_audio = [] if mode == "copy" else _probe_book_durations(book_id)
+        part_audio = [] if mode == "copy" else probe_book_durations(book_id)
+
+        # The last word before hours of transcription: if the book's ebook is
+        # clean, copy instead. The background pass usually got here first;
+        # this catches a book claimed before it did.
+        screened = None
+        if mode == "clean" and prescreen_mod.enabled(self.config):
+            try:
+                with session_scope() as session:
+                    book = session.get(Book, book_id)
+                    record = prescreen_mod.screen_book(session, self.config, book)
+                    screened = prescreen_mod.to_dict(record)
+            except Exception:
+                log.exception("Ebook check failed for %s; transcribing as usual", title)
+            if screened and screened["clean"] and self.config.prescreen.auto_mark_clean:
+                log.info("%s: ebook has no matches; copying it unchanged", title)
+                mode = "copy"
+                reason = "ebook_clean"
+                part_audio = []
+        elif reason == "ebook_clean":
+            with session_scope() as session:
+                screened = prescreen_mod.to_dict(session.get(Prescreen, book_id))
 
         now = time.monotonic()
         self._active[job_id] = {
@@ -970,6 +1042,8 @@ class JobQueue:
                 stages[-1]["seconds"] = round(time.time() - stages[-1]["started"], 1)
             job.result = {
                 "mode": mode,
+                "reason": reason,
+                "prescreen": json_safe(screened),
                 "timings": {
                     "audio_seconds": round(sum(part_audio), 1),
                     "stages": _stage_timings(stages),
@@ -1035,11 +1109,18 @@ def _requeue_row(session: Session, job_id: int, message: str) -> Job | None:
     return job
 
 
+def json_safe(value):
+    """Datetimes to strings, for a JSON column."""
+    if value is None:
+        return None
+    return {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in value.items()}
+
+
 def job_mode(job: Job) -> str:
     return (job.result or {}).get("mode") or "clean"
 
 
-def _probe_book_durations(book_id: str) -> list[float]:
+def probe_book_durations(book_id: str) -> list[float]:
     """Each part's running time, probing any the scan left at zero.
 
     Saved to the parts and the book so the work is done once. A part that

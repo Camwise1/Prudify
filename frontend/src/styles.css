@@ -1055,3 +1055,11 @@ tr.clickable:hover td { background: var(--bg-inset); }
 .chunk-bar.todo { height: 2px; background: var(--border); }
 
 .job-log { max-height: 320px; overflow-y: auto; }
+
+.ebook-check {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+  padding: 10px 12px;
+  font-size: 13px;
+}

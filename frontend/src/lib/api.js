@@ -134,6 +134,8 @@ export const api = {
   bookMatches: (id) => request(`/books/${id}/matches`),
   queueBook: (id) => request(`/books/${id}/queue`, { method: 'POST' }),
   markClean: (id) => request(`/books/${id}/mark-clean`, { method: 'POST' }),
+  prescreen: (id) => request(`/books/${id}/prescreen`),
+  runPrescreen: (id) => request(`/books/${id}/prescreen`, { method: 'POST' }),
   queueAll: (libraryId, author) => {
     const params = new URLSearchParams()
     if (libraryId) params.set('library_id', libraryId)

@@ -13,10 +13,11 @@ from sqlalchemy.orm import Session
 from ..config import Config
 from ..core import audio as audio_mod
 from ..db import db_session, session_scope
-from ..models import Book, BookStatus, JobStatus, Part
+from ..models import Book, BookStatus, JobStatus, Part, Prescreen
 from ..schemas import BookDetail, BookOut, BookPage, PartOut
 from ..services import library as library_service
-from ..services.queue import get_queue, job_mode
+from ..services import prescreen as prescreen_service
+from ..services.queue import get_queue, job_mode, probe_book_durations
 from .deps import get_config
 
 router = APIRouter(prefix="/books", tags=["books"])
@@ -265,6 +266,34 @@ def mark_clean(book_id: str, session: Session = Depends(db_session)) -> dict:
             detail="This book is being cleaned right now; cancel that job first",
         )
     return {"queued": True, "job_id": job.id if job else None}
+
+
+@router.get("/{book_id}/prescreen")
+def get_prescreen(book_id: str, session: Session = Depends(db_session)) -> dict:
+    """The last ebook check for this book, if there has been one."""
+    if session.get(Book, book_id) is None:
+        raise HTTPException(status_code=404, detail="Book not found")
+    return {"result": prescreen_service.to_dict(session.get(Prescreen, book_id))}
+
+
+@router.post("/{book_id}/prescreen")
+def run_prescreen(
+    book_id: str,
+    session: Session = Depends(db_session),
+    config: Config = Depends(get_config),
+) -> dict:
+    """Check the book against its ebook now, ignoring any earlier result."""
+    book = session.get(Book, book_id)
+    if book is None:
+        raise HTTPException(status_code=404, detail="Book not found")
+    if not prescreen_service.enabled(config):
+        raise HTTPException(status_code=409, detail="Add an ebook folder in Settings first")
+    prescreen_service.forget_index()
+    # The length decides whether the ebook is complete enough to trust.
+    probe_book_durations(book.id)
+    session.refresh(book)
+    record = prescreen_service.screen_book(session, config, book, force=True)
+    return {"result": prescreen_service.to_dict(record)}
 
 
 @router.post("/queue-all")

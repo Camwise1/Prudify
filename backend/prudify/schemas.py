@@ -11,6 +11,7 @@ from .config import (
     FilterSettings,
     LibrarySettings,
     OutputSettings,
+    PrescreenSettings,
     ProcessingSettings,
     ServerSettings,
     TranscriptionSettings,
@@ -113,6 +114,7 @@ class SettingsOut(BaseModel):
     filtering: FilterSettings
     output: OutputSettings
     processing: ProcessingSettings
+    prescreen: PrescreenSettings = Field(default_factory=PrescreenSettings)
     log_level: str
 
 
@@ -122,6 +124,7 @@ class SettingsIn(BaseModel):
     filtering: FilterSettings | None = None
     output: OutputSettings | None = None
     processing: ProcessingSettings | None = None
+    prescreen: PrescreenSettings | None = None
     log_level: str | None = None
 
 

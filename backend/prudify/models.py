@@ -148,3 +148,26 @@ class LogRecord(Base):
     level: Mapped[str] = mapped_column(String(16), default="INFO", index=True)
     logger: Mapped[str] = mapped_column(String(128), default="")
     message: Mapped[str] = mapped_column(Text, default="")
+
+
+class Prescreen(Base):
+    """A book's ebook, run through the wordlists: a forecast of what cleaning will find.
+
+    Cached per book, and redone when the ebook file or the filter settings
+    change. Like everything here it can be deleted and rebuilt.
+    """
+
+    __tablename__ = "prescreens"
+
+    book_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    ebook_path: Mapped[str] = mapped_column(String(1024), default="")
+    ebook_title: Mapped[str] = mapped_column(String(512), default="")
+    ebook_mtime: Mapped[float] = mapped_column(Float, default=0.0)
+    settings_key: Mapped[str] = mapped_column(String(64), default="")
+    word_count: Mapped[int] = mapped_column(Integer, default=0)
+    match_count: Mapped[int] = mapped_column(Integer, default=0)
+    counts_by_word: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Why the result cannot be relied on, if it cannot ("DRM-protected",
+    # "far shorter than the audiobook"). Empty means usable.
+    caveat: Mapped[str] = mapped_column(Text, default="")
+    checked_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

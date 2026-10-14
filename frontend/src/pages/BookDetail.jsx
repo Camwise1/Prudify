@@ -123,6 +123,8 @@ export default function BookDetail({ bookId, onClose, onChanged }) {
         </div>
       ) : null}
 
+      <EbookCheck bookId={book.id} />
+
       <Tabs
         active={tab}
         onChange={setTab}
@@ -275,5 +277,70 @@ export default function BookDetail({ bookId, onClose, onChanged }) {
         )
       ) : null}
     </Modal>
+  )
+}
+
+function EbookCheck({ bookId }) {
+  // A forecast from the book's ebook, when there is one. Quiet when there is
+  // not: most books will have no ebook, and that is not worth a box.
+  const toast = useToast()
+  const [result, setResult] = useState(undefined)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    api
+      .prescreen(bookId)
+      .then((body) => setResult(body.result))
+      .catch(() => setResult(null))
+  }, [bookId])
+
+  const run = async () => {
+    setBusy(true)
+    try {
+      const body = await api.runPrescreen(bookId)
+      setResult(body.result)
+      if (!body.result) toast('No matching ebook found', 'info')
+    } catch (err) {
+      toast(err.message, 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (result === undefined) return null
+  const top = Object.entries(result?.counts_by_word || {}).slice(0, 6)
+
+  return (
+    <div className="ebook-check mb">
+      <div className="flex">
+        <b>Ebook check</b>
+        {result ? (
+          result.clean ? (
+            <span className="pill cleaned">No matches</span>
+          ) : result.caveat ? (
+            <span className="pill partial">Not usable</span>
+          ) : (
+            <span className="pill failed">
+              {result.match_count} match{result.match_count === 1 ? '' : 'es'}
+            </span>
+          )
+        ) : (
+          <span className="faint">not checked</span>
+        )}
+        <button className="small spacer" disabled={busy} onClick={run}>
+          {busy ? 'Checking…' : result ? 'Check again' : 'Check against ebook'}
+        </button>
+      </div>
+      {result ? (
+        <div className="faint" style={{ fontSize: 12, marginTop: 6 }}>
+          {result.caveat ? `${result.caveat[0].toUpperCase()}${result.caveat.slice(1)}. ` : ''}
+          {result.word_count ? `${result.word_count.toLocaleString()} words in ` : ''}
+          <span className="mono" title={result.ebook_path}>
+            {result.ebook_path.split('/').pop()}
+          </span>
+          {top.length ? ` · ${top.map(([word, count]) => `${word} ×${count}`).join(', ')}` : ''}
+        </div>
+      ) : null}
+    </div>
   )
 }

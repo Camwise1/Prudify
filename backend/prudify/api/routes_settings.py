@@ -21,6 +21,7 @@ from ..schemas import (
 )
 from ..services import library as library_service
 from ..services.events import bus
+from ..services.queue import get_queue
 from .deps import get_config
 
 router = APIRouter(tags=["settings"])
@@ -57,6 +58,8 @@ def update_settings(
 
     save_config(config)
     request.app.state.config = config
+    if {"prescreen", "filtering"} & data.keys():
+        get_queue().settings_changed()
     bus.publish("settings.updated", {"sections": list(data.keys())})
     return SettingsOut(**config.model_dump())
 

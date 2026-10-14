@@ -72,6 +72,7 @@ export default function Settings({ settings, onSaved }) {
             { id: 'filtering', label: 'Filtering' },
             { id: 'output', label: 'Output' },
             { id: 'processing', label: 'Processing' },
+            { id: 'ebooks', label: 'Ebook check' },
             { id: 'security', label: 'Security' },
           ]}
         />
@@ -456,6 +457,33 @@ export default function Settings({ settings, onSaved }) {
             label="Keep working files for debugging"
             checked={draft.processing.keep_work_files}
             onChange={(value) => update('processing', 'keep_work_files', value)}
+          />
+        </div>
+      ) : null}
+
+      {tab === 'ebooks' ? (
+        <div className="card">
+          <p className="dim" style={{ marginTop: 0 }}>
+            Before transcribing a queued book, Prudify looks for the same book as an EPUB and runs
+            your wordlists over its text. That takes seconds instead of hours. Books are paired by
+            title and author; only plain, DRM-free <code>.epub</code> files can be read.
+          </p>
+          <Field
+            label="Ebook folders"
+            hint="One per line, searched including subfolders. Leave empty to turn the check off."
+          >
+            <textarea
+              style={{ minHeight: 90 }}
+              placeholder="/private/nfs/Media/Plex/Books/Ebooks"
+              value={(draft.prescreen?.ebook_paths || []).join('\n')}
+              onChange={(e) => update('prescreen', 'ebook_paths', e.target.value.split('\n'))}
+            />
+          </Field>
+          <Check
+            label="Copy books across unchanged when their ebook has no matches"
+            hint="Only when the ebook is DRM-free and long enough to be the whole book. Anything else is transcribed as usual."
+            checked={draft.prescreen?.auto_mark_clean ?? true}
+            onChange={(value) => update('prescreen', 'auto_mark_clean', value)}
           />
         </div>
       ) : null}

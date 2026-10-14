@@ -252,6 +252,23 @@ class ProcessingSettings(BaseModel):
     duration_tolerance_seconds: float = Field(default=1.0, ge=0.0, le=60.0)
 
 
+class PrescreenSettings(BaseModel):
+    """Check queued books against their ebooks before transcribing them."""
+
+    # Folders searched (recursively) for EPUBs. Empty turns the check off.
+    ebook_paths: list[str] = Field(default_factory=list)
+    # When a book's ebook has no wordlist matches at all, copy the audiobook
+    # across unchanged instead of transcribing it.
+    auto_mark_clean: bool = True
+
+    @field_validator("ebook_paths")
+    @classmethod
+    def _drop_blank_paths(cls, value: list[str]) -> list[str]:
+        # A blank line from the settings textarea would otherwise become
+        # Path(""), which is the server's working directory.
+        return [path.strip() for path in value if path.strip()]
+
+
 class Config(BaseModel):
     server: ServerSettings = Field(default_factory=ServerSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
@@ -260,6 +277,7 @@ class Config(BaseModel):
     filtering: FilterSettings = Field(default_factory=FilterSettings)
     output: OutputSettings = Field(default_factory=OutputSettings)
     processing: ProcessingSettings = Field(default_factory=ProcessingSettings)
+    prescreen: PrescreenSettings = Field(default_factory=PrescreenSettings)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
     # --- paths -----------------------------------------------------------

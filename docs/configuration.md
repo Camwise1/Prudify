@@ -104,6 +104,10 @@ processing:
   min_free_space_mb: 2048
   duration_tolerance_seconds: 1.0
 
+prescreen:
+  ebook_paths: []          # folders of EPUBs; empty turns the ebook check off
+  auto_mark_clean: true
+
 log_level: INFO
 ```
 
@@ -157,6 +161,16 @@ actually notices new books. Do not set it to 0 unless your library is local.
 
 **`output.container: same`** keeps M4B as M4B and MP3 as MP3. Forcing `m4b` on
 a folder of MP3s produces one M4B per MP3, which is probably not what you want.
+
+**`prescreen.ebook_paths`** lets Prudify check a queued book against its ebook
+before transcribing it. The EPUB is paired with the audiobook by title and
+author, read, and run through your wordlists in a second or two. With
+`auto_mark_clean` on, a book whose ebook has no matches at all is copied to the
+clean library unchanged instead of transcribed. That only happens when the
+ebook is DRM-free and has at least half the words a reading of that length
+implies; otherwise the result is shown on the book but the book is transcribed
+as usual. Any match means transcription still runs, because only the audio says
+where the words fall. MOBI, AZW3 and archived ebooks are not read.
 
 ## Adding a library
 

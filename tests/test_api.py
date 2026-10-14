@@ -731,3 +731,55 @@ class TestUnreachableLibrary:
         monkeypatch.setattr(library_mod.scanner, "iter_library", lambda library: iter(()))
         client.post("/api/v1/books/scan")
         assert client.get(f"/api/v1/books/{book_id}").json()["status"] != "missing"
+
+
+def test_a_book_whose_ebook_is_clean_is_copied_not_transcribed(app_client, tmp_path):
+    import time
+
+    from prudify.db import session_scope
+    from prudify.models import Part
+    from prudify.services import prescreen
+    from prudify.services.queue import get_queue
+
+    from .test_ebooks import make_epub
+
+    client, _ = app_client
+    make_epub(
+        tmp_path / "ebooks/Author/Book.epub",
+        title="Book",
+        author="Author",
+        chapters=("<p>" + "a quiet sentence " * 3200 + "</p>",),
+    )
+    client.put(
+        "/api/v1/settings", json={"prescreen": {"ebook_paths": [str(tmp_path / "ebooks")]}}
+    )
+    book_id = client.post("/api/v1/books/scan") and client.get("/api/v1/books").json()[
+        "items"
+    ][0]["id"]
+    # The fixture file is not real audio, so give it the length a probe would.
+    with session_scope() as session:
+        for part in session.query(Part).filter(Part.book_id == book_id):
+            part.duration = 3600.0
+        session.commit()
+    job_id = client.post(f"/api/v1/books/{book_id}/queue").json()["job_id"]
+
+    # The background pass picks the new job up on its own.
+    get_queue().notify()
+    for _ in range(100):
+        detail = client.get(f"/api/v1/queue/{job_id}/detail").json()
+        if detail["mode"] == "copy":
+            break
+        time.sleep(0.05)
+    assert detail["mode"] == "copy"
+
+    client.post("/api/v1/queue/resume")
+    for _ in range(100):
+        if client.get(f"/api/v1/books/{book_id}").json()["status"] == "cleaned":
+            break
+        time.sleep(0.05)
+    result = client.get(f"/api/v1/queue/{job_id}/detail").json()["job"]["result"]
+    assert result["reason"] == "ebook_clean"
+    assert result["prescreen"]["clean"] is True
+    assert (tmp_path / "clean/Author/Book/Book.m4b").read_bytes() == b"\0" * 4096
+    assert client.get(f"/api/v1/books/{book_id}/prescreen").json()["result"]["clean"]
+    prescreen.forget_index()

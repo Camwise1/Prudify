@@ -92,7 +92,13 @@ export default function JobDetail({ jobId, live, onClose, onChanged }) {
     >
       <div className="flex wrap mb">
         <StatusPill status={job.status} />
-        {detail.mode === 'copy' ? <span className="tag">marked clean · copy only</span> : null}
+        {detail.mode === 'copy' ? (
+          <span className="tag">
+            {job.result?.reason === 'ebook_clean' || job.message?.startsWith('Ebook')
+              ? 'ebook had no matches · copy only'
+              : 'marked clean · copy only'}
+          </span>
+        ) : null}
         <span className="dim">{job.book_author || 'Unknown author'}</span>
         {detail.mode !== 'copy' ? (
           <span className="faint">
