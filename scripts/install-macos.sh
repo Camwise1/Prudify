@@ -113,8 +113,26 @@ cat > "$PLIST" <<EOF
 </plist>
 EOF
 
-launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
+SERVICE="gui/$(id -u)/$LABEL"
+launchctl bootout "$SERVICE" 2>/dev/null || true
+# bootout returns before the old process has exited -- it is given up to
+# ExitTimeOut (60s) to finish its current write -- and bootstrapping while it
+# is still registered fails with a bare "Input/output error", leaving no
+# service at all. Wait for it to be gone, then retry the load a few times.
+for _ in $(seq 1 70); do
+  launchctl print "$SERVICE" >/dev/null 2>&1 || break
+  sleep 1
+done
+loaded=0
+for _ in $(seq 1 5); do
+  if launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null; then
+    loaded=1
+    break
+  fi
+  launchctl print "$SERVICE" >/dev/null 2>&1 && { loaded=1; break; }
+  sleep 2
+done
+[[ $loaded == 1 ]] || die "launchctl could not load $PLIST. Try: launchctl bootstrap gui/$(id -u) \"$PLIST\""
 
 say "Waiting for Prudify to start"
 for _ in $(seq 1 30); do
