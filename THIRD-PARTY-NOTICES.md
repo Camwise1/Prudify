@@ -22,6 +22,7 @@ on Prudify's own licence.
 | typer, rich | MIT |
 | faster-whisper | MIT |
 | ctranslate2 | MIT |
+| mlx-whisper, mlx (optional, Apple Silicon only) | MIT |
 | onnxruntime | MIT |
 | tokenizers, huggingface_hub | Apache-2.0 |
 | av (PyAV) | BSD-3-Clause |
@@ -72,6 +73,11 @@ Models are **not** bundled in the image. They are downloaded at first use from
 the Hugging Face Hub, from the `Systran/faster-whisper-*` repositories, which
 are MIT licensed -- as is OpenAI's original Whisper that they are converted
 from. They are public: no account, token or licence acceptance is required.
+
+The optional `mlx-whisper` engine downloads the equivalent MLX conversions
+from the `mlx-community/whisper-*` repositories instead. Prudify also embeds
+the per-model word-alignment head masks from OpenAI's Whisper (MIT), which
+mlx-whisper does not apply on its own.
 
 ## Wordlists
 

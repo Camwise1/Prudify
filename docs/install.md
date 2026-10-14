@@ -163,6 +163,55 @@ sudo systemctl enable --now prudify
 journalctl -u prudify -f
 ```
 
+### Apple Silicon Mac (GPU transcription)
+
+On an M-series Mac, install natively rather than in Docker. Docker Desktop
+runs containers in a Linux VM with no access to the Apple GPU, and
+faster-whisper has no Metal backend either way. The `mlx-whisper` engine
+runs Whisper on the GPU through Apple's MLX and is several times faster than
+faster-whisper on the same Mac's CPU.
+
+```bash
+git clone https://github.com/Camwise1/prudify.git ~/prudify
+~/prudify/scripts/install-macos.sh
+```
+
+The script installs ffmpeg, Python and Node with Homebrew, builds the UI,
+installs Prudify into `~/Library/Application Support/Prudify/venv`, selects
+`mlx-whisper` with `large-v3-turbo`, downloads the model, and registers a
+launchd service that starts at login. Re-run it after `git pull` to upgrade;
+your settings are kept.
+
+**Model choice on an 8 GB Mac.** `large-v3-turbo` is about 1.6 GB in memory
+and is the best accuracy for its speed. Whisper's large models hear speech
+better than `base.en` does, which matters when the job is catching every
+instance of a word. If the Mac is also busy with other work and swaps, drop to
+`small.en` in Settings → Transcription. Avoid `large-v3` on 8 GB.
+
+**Your library over the network.** Mount the share in Finder (Go → Connect to
+Server, `smb://nas/Media`), tick *Remember this password in my keychain*, and
+add the mounted volume to System Settings → General → Login Items so it
+remounts after a restart. Then add the library in Settings → Libraries using
+the `/Volumes/...` paths. The first time Prudify reads the share, macOS asks
+whether Python may access files on a network volume. Allow it.
+
+**One server per library.** If Prudify is already running elsewhere (in Docker
+on another machine, say), stop it or remove the library there before the Mac
+takes over. Two servers watching the same folders will race to write the same
+cleaned files.
+
+**Sleep.** The service runs under `caffeinate -i`, so the Mac will not idle-sleep
+while Prudify is running. Display sleep is unaffected.
+
+To stop or remove the service:
+
+```bash
+launchctl bootout gui/$(id -u)/com.camwise.prudify
+rm ~/Library/LaunchAgents/com.camwise.prudify.plist
+```
+
+Logs are in `~/Library/Application Support/Prudify/logs/`.
+
 ### macOS (launchd)
 
 `~/Library/LaunchAgents/com.prudify.plist`:

@@ -55,7 +55,7 @@ libraries:
     exclude_patterns: []     # globs relative to source_path
 
 transcription:
-  engine: faster-whisper     # faster-whisper | whisper-cpp | openai-whisper
+  engine: faster-whisper     # faster-whisper | mlx-whisper (Apple Silicon) | whisper-cpp | openai-whisper
   model: base.en
   device: auto               # auto | cpu | cuda
   compute_type: auto         # auto | int8 | int8_float16 | float16 | float32

@@ -12,6 +12,7 @@ const WHISPER_MODELS = [
   'medium.en',
   'medium',
   'large-v3',
+  'large-v3-turbo',
   'distil-large-v3',
 ]
 
@@ -94,13 +95,14 @@ export default function Settings({ settings, onSaved }) {
           <div className="row">
             <Field
               label="Engine"
-              hint="faster-whisper runs in bounded memory — the safe choice on machines without a GPU."
+              hint="faster-whisper runs in bounded memory — the safe choice on machines without a GPU. On an Apple Silicon Mac, mlx-whisper uses the GPU."
             >
               <select
                 value={draft.transcription.engine}
                 onChange={(e) => update('transcription', 'engine', e.target.value)}
               >
                 <option value="faster-whisper">faster-whisper (recommended)</option>
+                <option value="mlx-whisper">mlx-whisper (Apple Silicon)</option>
                 <option value="whisper-cpp">whisper.cpp</option>
                 <option value="openai-whisper">openai-whisper</option>
               </select>

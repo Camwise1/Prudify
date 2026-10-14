@@ -251,6 +251,173 @@ def _cuda_available() -> bool:
 
 
 # --------------------------------------------------------------------------
+# mlx-whisper (Apple Silicon GPU)
+# --------------------------------------------------------------------------
+
+# CTranslate2 has no Metal backend, so on a Mac faster-whisper is CPU-only.
+# MLX runs Whisper on the Apple GPU through unified memory instead. The
+# mlx-community repos use their own names, so map Prudify's short model names
+# onto them; anything containing a "/" is passed through as a repo or path.
+MLX_MODELS: dict[str, str] = {
+    "tiny.en": "mlx-community/whisper-tiny.en-mlx",
+    "tiny": "mlx-community/whisper-tiny-mlx",
+    "base.en": "mlx-community/whisper-base.en-mlx",
+    "base": "mlx-community/whisper-base-mlx",
+    "small.en": "mlx-community/whisper-small.en-mlx",
+    "small": "mlx-community/whisper-small-mlx",
+    "medium.en": "mlx-community/whisper-medium.en-mlx",
+    "medium": "mlx-community/whisper-medium-mlx",
+    "large-v3": "mlx-community/whisper-large-v3-mlx",
+    "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
+    "distil-large-v3": "mlx-community/distil-whisper-large-v3",
+}
+
+# Which decoder heads track word timing, per model -- the dumps OpenAI ships in
+# whisper/__init__.py (MIT). mlx-whisper never sets them and falls back to
+# every head in the last half of the decoder, which smears word boundaries.
+# Prudify mutes on those boundaries, so loose timing means clipped syllables.
+_MLX_ALIGNMENT_HEADS: dict[str, bytes] = {
+    "tiny.en": b"ABzY8J1N>@0{>%R00Bk>$p{7v037`oCl~+#00",
+    "tiny": b"ABzY8bu8Lr0{>%RKn9Fp%m@SkK7Kt=7ytkO",
+    "base.en": b"ABzY8;40c<0{>%RzzG;p*o+Vo09|#PsxSZm00",
+    "base": b"ABzY8KQ!870{>%RzyTQH3`Q^yNP!>##QT-<FaQ7m",
+    "small.en": b"ABzY8>?_)10{>%RpeA61k&I|OI3I$65C{;;pbCHh0B{qLQ;+}v00",
+    "small": b"ABzY8DmU6=0{>%Rpa?J`kvJ6qF(V^F86#Xh7JUGMK}P<N0000",
+    "medium.en": b"ABzY8usPae0{>%R7<zz_OvQ{)4kMa0BMw6u5rT}kRKX;$NfYBv00*Hl@qhsU00",
+    "medium": b"ABzY8B0Jh+0{>%R7}kK1fFL7w6%<-Pf*t^=N)Qr&0RR9",
+    "large-v3": b"ABzY8gWO1E0{>%R7(9S+Kn!D~%ngiGaR?*L!iJG9p-nab0JQ=-{D1-g00",
+    "large-v3-turbo": b"ABzY8j^C+e0{>%RARaKHP%t(lGR*)0g!tONPyhe`",
+}
+
+# mlx-whisper has no VAD. Its hallucination guard -- skip silence longer than
+# this when the words around it look invented -- stands in for vad_filter.
+_MLX_HALLUCINATION_SILENCE_SECONDS = 2.0
+
+
+def mlx_model_repo(model: str) -> str:
+    if "/" in model or Path(model).exists():
+        return model
+    try:
+        return MLX_MODELS[model]
+    except KeyError:
+        raise TranscriptionError(
+            f"No MLX build of Whisper model {model!r}. Choose one of "
+            f"{', '.join(MLX_MODELS)}, or give a Hugging Face repo id."
+        ) from None
+
+
+class MlxWhisperTranscriber(Transcriber):
+    name = "mlx-whisper"
+
+    def _module(self):
+        try:
+            import mlx_whisper
+        except ImportError as exc:  # pragma: no cover - depends on optional extra
+            raise TranscriptionError(
+                "mlx-whisper is not installed. It runs only on Apple Silicon Macs; "
+                "install it with `pip install 'prudify[mlx]'`."
+            ) from exc
+        return mlx_whisper
+
+    def _prepare_model(self, repo: str, fp16: bool) -> None:
+        """Load through mlx-whisper's own cache, then fix its alignment heads.
+
+        ``mlx_whisper.transcribe`` fetches the model from ``ModelHolder``, so
+        loading it there first and adjusting it in place is what the
+        transcribe call then uses.
+        """
+        heads = _MLX_ALIGNMENT_HEADS.get(self.settings.model)
+        if heads is None:
+            return
+        try:
+            import mlx.core as mx
+            from mlx_whisper.transcribe import ModelHolder
+        except ImportError:  # pragma: no cover - only reachable on a Mac
+            return
+        model = ModelHolder.get_model(repo, mx.float16 if fp16 else mx.float32)
+        model.set_alignment_heads(heads)
+
+    def unload(self) -> None:
+        try:
+            from mlx_whisper.transcribe import ModelHolder
+        except ImportError:
+            return
+        if ModelHolder.model is None:
+            return
+        ModelHolder.model = None
+        ModelHolder.model_path = None
+        import gc
+
+        gc.collect()
+        try:
+            import mlx.core as mx
+
+            mx.clear_cache()
+        except Exception:  # noqa: BLE001 - older mlx spells it mx.metal.clear_cache
+            pass
+
+    def transcribe(
+        self,
+        wav_path: Path,
+        progress: ProgressFn | None = None,
+        cancel: Callable[[], bool] | None = None,
+    ) -> Transcript:
+        if cancel and cancel():
+            raise OperationCancelled("Cancelled")
+        mlx_whisper = self._module()
+        repo = mlx_model_repo(self.settings.model)
+        if self.settings.model_dir and not Path(repo).exists():
+            # mlx-whisper downloads into the default Hugging Face cache; honour
+            # the configured directory by fetching there and passing the path.
+            from huggingface_hub import snapshot_download
+
+            repo = snapshot_download(repo_id=repo, cache_dir=self.settings.model_dir)
+
+        fp16 = self.settings.compute_type != "float32"
+        self._prepare_model(repo, fp16)
+
+        log.info("Transcribing with mlx-whisper model=%s", repo)
+        # No beam_size: mlx-whisper implements greedy decoding only and raises
+        # on a beam search request.
+        result = mlx_whisper.transcribe(
+            str(wav_path),
+            path_or_hf_repo=repo,
+            language=self.settings.language or None,
+            word_timestamps=True,
+            initial_prompt=self.settings.initial_prompt or None,
+            condition_on_previous_text=False,
+            hallucination_silence_threshold=(
+                _MLX_HALLUCINATION_SILENCE_SECONDS if self.settings.vad_filter else None
+            ),
+            fp16=fp16,
+            verbose=None,
+        )
+        if cancel and cancel():
+            raise OperationCancelled("Cancelled")
+
+        words: list[Word] = []
+        for segment in result.get("segments", []):
+            for word in segment.get("words", []):
+                words.append(
+                    Word(
+                        start=float(word["start"]),
+                        end=float(word["end"]),
+                        text=str(word["word"]),
+                        probability=float(word.get("probability", 1.0)),
+                    )
+                )
+        if progress:
+            progress(1.0, "transcribing")
+        return Transcript(
+            words=words,
+            language=result.get("language", self.settings.language),
+            duration=audio_mod.probe(wav_path).duration,
+            engine=self.name,
+            model=self.settings.model,
+        )
+
+
+# --------------------------------------------------------------------------
 # whisper.cpp
 # --------------------------------------------------------------------------
 
@@ -394,6 +561,7 @@ class OpenAIWhisperTranscriber(Transcriber):
 
 ENGINES: dict[str, type[Transcriber]] = {
     "faster-whisper": FasterWhisperTranscriber,
+    "mlx-whisper": MlxWhisperTranscriber,
     "whisper-cpp": WhisperCppTranscriber,
     "openai-whisper": OpenAIWhisperTranscriber,
 }

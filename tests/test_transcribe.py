@@ -44,3 +44,55 @@ def test_default_auto_chunks_long_files(monkeypatch, tmp_path):
         "chunk-0002.wav",
         "chunk-0003.wav",
     ]
+
+
+def test_mlx_model_names_map_to_mlx_community_repos():
+    assert transcribe_mod.mlx_model_repo("base.en") == "mlx-community/whisper-base.en-mlx"
+    assert (
+        transcribe_mod.mlx_model_repo("large-v3-turbo") == "mlx-community/whisper-large-v3-turbo"
+    )
+    assert transcribe_mod.mlx_model_repo("someone/custom-whisper") == "someone/custom-whisper"
+
+
+def test_mlx_unknown_model_is_a_clear_error():
+    import pytest
+
+    with pytest.raises(transcribe_mod.TranscriptionError, match="No MLX build"):
+        transcribe_mod.mlx_model_repo("large-v9")
+
+
+def test_mlx_transcriber_returns_words_without_beam_search(monkeypatch, tmp_path):
+    import sys
+    import types
+
+    calls: list[dict] = []
+
+    def fake_transcribe(audio, **kwargs):
+        calls.append({"audio": audio, **kwargs})
+        return {
+            "language": "en",
+            "segments": [
+                {"words": [{"start": 0.5, "end": 0.9, "word": " hello", "probability": 0.8}]},
+                {"words": [{"start": 1.0, "end": 1.4, "word": " world"}]},
+            ],
+        }
+
+    fake_module = types.SimpleNamespace(transcribe=fake_transcribe)
+    monkeypatch.setitem(sys.modules, "mlx_whisper", fake_module)
+    monkeypatch.setattr(
+        transcribe_mod.audio_mod,
+        "probe",
+        lambda path: MediaInfo(path=Path(path), duration=2.0),
+    )
+
+    settings = TranscriptionSettings(engine="mlx-whisper", model="small.en")
+    transcriber = transcribe_mod.get_transcriber(settings)
+    transcript = transcriber.transcribe(tmp_path / "audio.wav")
+
+    assert [w.text for w in transcript.words] == [" hello", " world"]
+    assert transcript.words[0].probability == 0.8
+    assert transcript.engine == "mlx-whisper"
+    (call,) = calls
+    assert call["path_or_hf_repo"] == "mlx-community/whisper-small.en-mlx"
+    assert call["word_timestamps"] is True
+    assert "beam_size" not in call

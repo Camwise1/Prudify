@@ -41,6 +41,9 @@ dependencies = [
 # The transcription backend is optional so the server can be installed and
 # explored (and CI can run) without pulling ~1 GB of ML wheels.
 whisper = ["faster-whisper>=1.0.0"]
+# Apple Silicon only: Whisper on the Mac GPU via MLX. faster-whisper cannot
+# use Metal, so on an M-series Mac this is several times faster.
+mlx = ["mlx-whisper>=0.4.2; sys_platform == 'darwin' and platform_machine == 'arm64'"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

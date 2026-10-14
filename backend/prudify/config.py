@@ -164,7 +164,9 @@ class LibrarySettings(BaseModel):
 
 
 class TranscriptionSettings(BaseModel):
-    engine: Literal["faster-whisper", "whisper-cpp", "openai-whisper"] = "faster-whisper"
+    engine: Literal[
+        "faster-whisper", "mlx-whisper", "whisper-cpp", "openai-whisper"
+    ] = "faster-whisper"
     model: str = "base.en"
     # "auto" picks cuda when torch/CTranslate2 report a usable GPU, else cpu.
     device: Literal["auto", "cpu", "cuda"] = "auto"

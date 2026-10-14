@@ -77,6 +77,17 @@ def _transcription_status(config: Config) -> tuple[bool, str, bool]:
         except Exception:
             gpu = False
         return True, f"faster-whisper ready ({config.transcription.model})", gpu
+    if engine == "mlx-whisper":
+        try:
+            import mlx_whisper  # noqa: F401
+        except ImportError:
+            return (
+                False,
+                "mlx-whisper is not installed (Apple Silicon only). "
+                "Run: pip install 'prudify[mlx]'",
+                False,
+            )
+        return True, f"mlx-whisper ready on Apple GPU ({config.transcription.model})", True
     if engine == "whisper-cpp":
         binary = config.transcription.whisper_cpp_binary or shutil.which("whisper-cli")
         ok = bool(binary and Path(binary).exists())

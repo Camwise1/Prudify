@@ -137,6 +137,11 @@ prudify serve
 your distribution's package manager. See [docs/install.md](docs/install.md) for
 running it as a service on each platform.
 
+**Apple Silicon Mac?** Use `scripts/install-macos.sh` instead. It installs
+the `mlx-whisper` engine, which transcribes on the Mac's GPU, and sets Prudify
+up as a login service. See
+[docs/install.md](docs/install.md#apple-silicon-mac-gpu-transcription).
+
 ### From source
 
 ```bash
