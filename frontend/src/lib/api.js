@@ -193,6 +193,7 @@ export function openEventStream(onEvent) {
     'job.finished',
     'job.cancelled',
     'queue.paused',
+    'job.requeued',
     'queue.cleared',
     'queue.cooldown',
     'queue.auto_enqueued',

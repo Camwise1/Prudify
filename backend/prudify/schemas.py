@@ -97,6 +97,9 @@ class JobOut(BaseModel):
 
 class QueueState(BaseModel):
     paused: bool
+    # Set when the queue paused itself (an unreachable library); it resumes
+    # on its own when the cause clears.
+    paused_reason: str = ""
     active: list[dict[str, Any]] = Field(default_factory=list)
     pending: list[JobOut] = Field(default_factory=list)
     recent: list[JobOut] = Field(default_factory=list)

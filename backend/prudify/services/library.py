@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..config import Config, LibrarySettings
 from ..core import scanner
+from ..core.reachability import check_dir
 from ..models import Book, BookStatus, Part
 from .events import bus
 
@@ -30,9 +31,10 @@ def destination_for(library: LibrarySettings, config: Config, relative_path: str
 def scan_library(session: Session, config: Config, library: LibrarySettings) -> dict:
     """Walk one library and upsert its books. Returns a summary dict."""
     root = Path(library.source_path).expanduser()
-    if not root.is_dir():
-        log.warning("Library %s: source path does not exist: %s", library.name, root)
-        return {"library": library.name, "error": f"Source path not found: {root}"}
+    problem = check_dir(root)
+    if problem:
+        log.warning("Library %s: not scanning, source unreachable: %s", library.name, problem)
+        return {"library": library.name, "error": f"Source unreachable: {problem}"}
 
     started = datetime.now(timezone.utc)
     seen_keys: set[str] = set()
@@ -142,7 +144,20 @@ def scan_library(session: Session, config: Config, library: LibrarySettings) -> 
             session.commit()
             log.debug("Scan checkpoint at %d book(s) in %s", scanned, library.name)
 
-    # Anything not seen this pass has left the filesystem.
+    # Anything not seen this pass has left the filesystem -- provided the
+    # filesystem was there to look at. A NAS that vanished mid-walk makes the
+    # walk come back short, not fail, and once marked every book in the
+    # library "missing" (346 of them, in the outage that prompted this).
+    problem = check_dir(root)
+    if problem:
+        session.commit()
+        log.warning(
+            "Library %s became unreachable during the scan; not marking anything missing: %s",
+            library.name,
+            problem,
+        )
+        return {"library": library.name, "error": f"Source unreachable: {problem}"}
+
     stale = session.execute(
         select(Book).where(Book.library_id == library.id)
     ).scalars().all()

@@ -623,3 +623,111 @@ def test_queue_reports_an_estimate(app_client):
     # rather than estimated at zero.
     assert state["estimate"]["unknown_jobs"] == 1
     assert state["pending"][0]["estimate_seconds"] is None
+
+
+class TestUnreachableLibrary:
+    """A NAS going away must pause the queue, not fail everything in it."""
+
+    def _book(self, client):
+        client.post("/api/v1/books/scan")
+        return client.get("/api/v1/books").json()["items"][0]["id"]
+
+    def test_a_job_waits_and_the_queue_pauses_itself(self, app_client, monkeypatch):
+        import time
+
+        from prudify.services import queue as queue_mod
+
+        client, _ = app_client
+        book_id = self._book(client)
+        job_id = client.post(f"/api/v1/books/{book_id}/queue").json()["job_id"]
+
+        monkeypatch.setattr(queue_mod, "check_dir", lambda path, timeout=15.0: "timed out")
+        client.post("/api/v1/queue/resume")
+        for _ in range(100):
+            state = client.get("/api/v1/queue").json()
+            if state["paused_reason"]:
+                break
+            time.sleep(0.05)
+
+        assert "unreachable" in state["paused_reason"]
+        assert [job["id"] for job in state["pending"]] == [job_id]
+        assert state["pending"][0]["message"].startswith("Waiting:")
+        assert client.get(f"/api/v1/books/{book_id}").json()["status"] == "queued"
+
+        # Back on the network: the queue picks itself up again.
+        monkeypatch.setattr(queue_mod, "check_dir", lambda path, timeout=15.0: None)
+        queue_mod.get_queue()._recheck_suspension(time.monotonic() + 3600)
+        state = client.get("/api/v1/queue").json()
+        assert state["paused"] is False
+        assert state["paused_reason"] == ""
+
+    def test_a_share_lost_mid_book_interrupts_rather_than_fails(self, app_client, monkeypatch):
+        import time
+
+        from prudify.services import queue as queue_mod
+
+        client, _ = app_client
+        book_id = self._book(client)
+        job_id = client.post(f"/api/v1/books/{book_id}/queue").json()["job_id"]
+
+        # Reachable when the job starts (source, then output), gone after.
+        calls = []
+
+        def flaky(path, timeout=15.0):
+            calls.append(path)
+            return None if len(calls) <= 2 else "Operation timed out"
+
+        def lost(**_kwargs):
+            raise TimeoutError(60, "Operation timed out")
+
+        monkeypatch.setattr(queue_mod, "check_dir", flaky)
+        monkeypatch.setattr(queue_mod, "clean_part", lost)
+        client.post("/api/v1/queue/resume")
+        for _ in range(100):
+            state = client.get("/api/v1/queue").json()
+            if state["paused_reason"]:
+                break
+            time.sleep(0.05)
+
+        assert [job["id"] for job in state["pending"]] == [job_id]
+        history = client.get("/api/v1/queue/history?status=failed").json()["items"]
+        assert history == []
+
+    def test_a_pause_by_hand_is_not_lifted_automatically(self, app_client, monkeypatch):
+        import time
+
+        from prudify.services import queue as queue_mod
+
+        client, _ = app_client
+        queue = queue_mod.get_queue()
+        queue._suspend("Library Test is unreachable")
+        client.post("/api/v1/queue/pause")
+        monkeypatch.setattr(queue_mod, "check_dir", lambda path, timeout=15.0: None)
+        queue._recheck_suspension(time.monotonic() + 3600)
+        assert client.get("/api/v1/queue").json()["paused"] is True
+
+    def test_a_scan_of_a_vanished_share_marks_nothing_missing(self, app_client, monkeypatch):
+        from prudify.services import library as library_mod
+
+        client, _ = app_client
+        book_id = self._book(client)
+
+        monkeypatch.setattr(library_mod, "check_dir", lambda path, timeout=15.0: "timed out")
+        client.post("/api/v1/books/scan")
+        assert client.get(f"/api/v1/books/{book_id}").json()["status"] != "missing"
+
+    def test_a_share_lost_mid_scan_marks_nothing_missing(self, app_client, monkeypatch):
+        from prudify.services import library as library_mod
+
+        client, _ = app_client
+        book_id = self._book(client)
+
+        # The walk comes back empty, as it did when the NAS dropped, and the
+        # share is gone by the time the scan would mark books missing.
+        answers = iter([None, "timed out"])
+        monkeypatch.setattr(
+            library_mod, "check_dir", lambda path, timeout=15.0: next(answers, "timed out")
+        )
+        monkeypatch.setattr(library_mod.scanner, "iter_library", lambda library: iter(()))
+        client.post("/api/v1/books/scan")
+        assert client.get(f"/api/v1/books/{book_id}").json()["status"] != "missing"

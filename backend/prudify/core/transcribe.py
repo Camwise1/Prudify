@@ -601,6 +601,17 @@ def _usable_wav(path: Path, expected_duration: float) -> bool:
     return expected_duration <= 0 or found >= expected_duration * 0.98
 
 
+def _read_chunk_cache(path: Path) -> list[Word] | None:
+    """A finished chunk's words, or None to transcribe it (again)."""
+    try:
+        return [Word.from_dict(w) for w in json.loads(path.read_text())]
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        log.warning("Ignoring unreadable chunk cache %s: %s", path.name, exc)
+        return None
+
+
 def transcribe_file(
     source: Path,
     settings: TranscriptionSettings,
@@ -670,9 +681,8 @@ def transcribe_file(
         read_end = min(total, core_end + overlap)
 
         cache = work_dir / f"chunk-{index:04d}.json"
-        if cache.exists():
-            chunk_words = [Word.from_dict(w) for w in json.loads(cache.read_text())]
-        else:
+        chunk_words = _read_chunk_cache(cache)
+        if chunk_words is None:
             wav = work_dir / f"chunk-{index:04d}.wav"
             audio_mod.extract_pcm(
                 source,
@@ -692,7 +702,11 @@ def transcribe_file(
                 )
                 for w in chunk.words
             ]
-            cache.write_text(json.dumps([w.to_dict() for w in chunk_words]))
+            # Written aside and renamed, so a crash mid-write leaves no
+            # half a file to trip over on resume.
+            staged = cache.with_suffix(".json.part")
+            staged.write_text(json.dumps([w.to_dict() for w in chunk_words]))
+            staged.replace(cache)
 
         # Drop words that fell inside the overlap padding; the neighbouring
         # chunk owns them. Words are kept if their midpoint is in the core.

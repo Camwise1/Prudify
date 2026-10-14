@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../lib/api.js'
 import { clockIn, formatDuration, jobActivity, relativeTime } from '../lib/format.js'
-import { Empty, Icon, Progress, StatusPill, Tabs, useToast } from '../components/ui.jsx'
+import { Banner, Empty, Icon, Progress, StatusPill, Tabs, useToast } from '../components/ui.jsx'
 import JobDetail from './JobDetail.jsx'
 
 export default function Queue({ queue, onRefresh }) {
@@ -56,6 +56,13 @@ export default function Queue({ queue, onRefresh }) {
         <div className="spacer" />
         {queue?.paused ? <span className="pill partial">Paused</span> : null}
       </div>
+
+      {queue?.paused_reason ? (
+        <Banner tone="warn">
+          <b>Paused automatically.</b> {queue.paused_reason}. Nothing has been marked failed;
+          the queue resumes by itself once the library can be reached again.
+        </Banner>
+      ) : null}
 
       <Tabs
         active={tab}

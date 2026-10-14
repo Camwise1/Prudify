@@ -329,3 +329,68 @@ class TestPassThrough:
         with pytest.raises(PipelineCancelled):
             pass_through_part(source, destination, cancel=lambda: True)
         assert list(tmp_path.iterdir()) == [source]
+
+
+class TestChunkCache:
+    def test_follows_the_file_and_model_not_the_job(self, config, tmp_path):
+        from prudify.core.pipeline import chunk_cache_dir
+
+        source = tmp_path / "book.m4b"
+        source.write_bytes(b"audio")
+        first = chunk_cache_dir(config, source)
+        assert chunk_cache_dir(config, source) == first
+
+        config.transcription.model = "some-other-model"
+        assert chunk_cache_dir(config, source) != first
+
+    def test_survives_a_failed_transcription(self, config, tmp_path, monkeypatch):
+        from prudify.core import pipeline as pipeline_mod
+        from prudify.core.pipeline import chunk_cache_dir
+
+        source = tmp_path / "book.m4b"
+        source.write_bytes(b"audio")
+        monkeypatch.setattr(
+            pipeline_mod.audio_mod,
+            "probe",
+            lambda path: audio_mod.MediaInfo(path=path, duration=7200.0),
+        )
+        seen = []
+
+        def failing(_source, _settings, work_dir, **_kwargs):
+            work_dir.mkdir(parents=True, exist_ok=True)
+            (work_dir / "chunk-0000.json").write_text("[]")
+            seen.append(work_dir)
+            raise OSError("Operation timed out")
+
+        monkeypatch.setattr(pipeline_mod.transcribe_mod, "transcribe_file", failing)
+        with pytest.raises(OSError):
+            clean_part(source, tmp_path / "out/book.m4b", config, tmp_path / "job-1")
+
+        assert seen == [chunk_cache_dir(config, source)]
+        assert (seen[0] / "chunk-0000.json").exists()
+
+    def test_adopts_chunks_left_in_an_old_job_directory(self, config, tmp_path, monkeypatch):
+        """Upgrading mid-book must not throw away hours of transcription."""
+        from prudify.core import pipeline as pipeline_mod
+        from prudify.core.pipeline import chunk_cache_dir
+
+        source = tmp_path / "book.m4b"
+        source.write_bytes(b"audio")
+        legacy = tmp_path / "job-1" / "transcribe"
+        legacy.mkdir(parents=True)
+        (legacy / "chunk-0000.json").write_text("[]")
+        monkeypatch.setattr(
+            pipeline_mod.audio_mod,
+            "probe",
+            lambda path: audio_mod.MediaInfo(path=path, duration=7200.0),
+        )
+
+        def failing(_source, _settings, work_dir, **_kwargs):
+            raise OSError("stop here")
+
+        monkeypatch.setattr(pipeline_mod.transcribe_mod, "transcribe_file", failing)
+        with pytest.raises(OSError):
+            clean_part(source, tmp_path / "out/book.m4b", config, tmp_path / "job-1")
+
+        assert (chunk_cache_dir(config, source) / "chunk-0000.json").exists()
+        assert not legacy.exists()

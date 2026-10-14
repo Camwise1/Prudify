@@ -88,26 +88,47 @@ class PartResult:
         }
 
 
-def transcript_cache_path(config: Config, source: Path) -> Path:
-    """Cache key covers the file identity *and* the model that produced it."""
+def _source_key(config: Config, source: Path) -> list[str]:
     try:
         stat = source.stat()
         stamp = f"{stat.st_size}:{int(stat.st_mtime)}"
     except OSError:
         stamp = "0:0"
-    key = ":".join(
-        [
-            str(source.resolve()),
-            stamp,
-            config.transcription.engine,
-            config.transcription.model,
-            config.transcription.language,
-            str(config.transcription.vad_filter),
-        ]
-    )
-    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:20]
+    return [
+        str(source.resolve()),
+        stamp,
+        config.transcription.engine,
+        config.transcription.model,
+        config.transcription.language,
+        str(config.transcription.vad_filter),
+    ]
+
+
+def _cache_name(source: Path, key: list[str]) -> str:
+    digest = hashlib.sha1(":".join(key).encode("utf-8")).hexdigest()[:20]
     safe_name = "".join(c for c in source.stem if c.isalnum() or c in "-_ ")[:60].strip()
-    return config.transcript_dir() / f"{safe_name or 'book'}-{digest}.json"
+    return f"{safe_name or 'book'}-{digest}"
+
+
+def transcript_cache_path(config: Config, source: Path) -> Path:
+    """Cache key covers the file identity *and* the model that produced it."""
+    return config.transcript_dir() / f"{_cache_name(source, _source_key(config, source))}.json"
+
+
+def chunk_cache_dir(config: Config, source: Path) -> Path:
+    """Where a long transcription keeps its finished chunks until it completes.
+
+    Keyed like the transcript cache -- file identity and model -- plus the
+    chunk layout, rather than by job. A job that fails part-way (the NAS
+    dropping off the network, say) is replaced by a new job with a new id when
+    the book is queued again; keyed by job, the chunks done so far were
+    unreachable and a 25-hour book started over from the first one.
+    """
+    key = _source_key(config, source) + [
+        str(config.transcription.chunk_minutes),
+        str(config.transcription.chunk_overlap_seconds),
+    ]
+    return config.resolved_work_dir() / "chunks" / _cache_name(source, key)
 
 
 def _scaled(stage: str, fraction: float) -> float:
@@ -288,11 +309,19 @@ def clean_part(
         def t_progress(fraction: float, message: str) -> None:
             report("transcribing", fraction, message)
 
+        chunks = chunk_cache_dir(config, source)
+        legacy = work_dir / "transcribe"
+        if legacy.is_dir() and not chunks.exists():
+            # Chunks from before the cache moved out of the job directory:
+            # same file, same settings, so carry them over rather than redo
+            # hours of transcription on the first run after an upgrade.
+            chunks.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(legacy), str(chunks))
         try:
             transcript = transcribe_mod.transcribe_file(
                 source,
                 config.transcription,
-                work_dir=work_dir / "transcribe",
+                work_dir=chunks,
                 progress=t_progress,
                 cancel=cancel,
             )
@@ -301,6 +330,10 @@ def clean_part(
         if config.processing.keep_transcripts:
             transcript.save(cache_path)
             result.transcript_path = str(cache_path)
+        # The whole transcript now exists, so the pieces are redundant -- even
+        # if the render below fails, a retry starts from the transcript.
+        if not config.processing.keep_work_files:
+            shutil.rmtree(chunks, ignore_errors=True)
     else:
         result.transcript_path = str(cache_path)
 
@@ -424,7 +457,6 @@ def clean_part(
 
     if not config.processing.keep_work_files:
         shutil.rmtree(work_dir / "render", ignore_errors=True)
-        shutil.rmtree(work_dir / "transcribe", ignore_errors=True)
 
     return result
 
@@ -441,15 +473,18 @@ def preview_part(
     if cache_path.exists():
         transcript = transcribe_mod.Transcript.load(cache_path)
     else:
+        chunks = chunk_cache_dir(config, source)
         transcript = transcribe_mod.transcribe_file(
             source,
             config.transcription,
-            work_dir=work_dir / "transcribe",
+            work_dir=chunks,
             progress=(lambda f, m: progress("transcribing", f, m)) if progress else None,
             cancel=cancel,
         )
         if config.processing.keep_transcripts:
             transcript.save(cache_path)
+        if not config.processing.keep_work_files:
+            shutil.rmtree(chunks, ignore_errors=True)
 
     matcher = matcher_mod.build_matcher_from_settings(
         config.filtering, user_dir=config.resolved_data_dir() / "wordlists"

@@ -103,3 +103,55 @@ def test_mlx_transcriber_returns_words_without_beam_search(monkeypatch, tmp_path
     assert call["path_or_hf_repo"] == "mlx-community/whisper-small.en-mlx"
     assert call["word_timestamps"] is True
     assert "beam_size" not in call
+
+
+def _chunked_setup(monkeypatch, fail_on: str | None = None):
+    calls: list[str] = []
+
+    class FakeTranscriber:
+        name = "fake"
+
+        def transcribe(self, wav_path, progress=None, cancel=None):
+            name = Path(wav_path).name
+            if name == fail_on:
+                raise OSError("Operation timed out")
+            calls.append(name)
+            return Transcript(words=[Word(0.0, 1.0, "word")], engine=self.name)
+
+    def fake_extract(_source, destination, **_kwargs):
+        Path(destination).write_bytes(b"wav")
+
+    monkeypatch.setattr(transcribe_mod, "get_transcriber", lambda _settings: FakeTranscriber())
+    monkeypatch.setattr(
+        transcribe_mod.audio_mod,
+        "probe",
+        lambda path: MediaInfo(path=Path(path), duration=2 * 60 * 60),
+    )
+    monkeypatch.setattr(transcribe_mod.audio_mod, "extract_pcm", fake_extract)
+    return calls
+
+
+def test_a_failed_run_resumes_from_the_chunks_it_finished(monkeypatch, tmp_path):
+    """The NAS dropping mid-book must not cost the chunks already done."""
+    import pytest
+
+    calls = _chunked_setup(monkeypatch, fail_on="chunk-0002.wav")
+    with pytest.raises(OSError):
+        transcribe_mod.transcribe_file(Path("book.m4b"), TranscriptionSettings(), tmp_path)
+    assert calls == ["chunk-0000.wav", "chunk-0001.wav"]
+
+    calls = _chunked_setup(monkeypatch)
+    transcribe_mod.transcribe_file(Path("book.m4b"), TranscriptionSettings(), tmp_path)
+    assert calls == ["chunk-0002.wav", "chunk-0003.wav"]
+
+
+def test_an_unreadable_chunk_is_transcribed_again(monkeypatch, tmp_path):
+    calls = _chunked_setup(monkeypatch)
+    (tmp_path / "chunk-0001.json").write_text('[{"start": 0.0, "end"')
+    for index in (0, 2, 3):
+        (tmp_path / f"chunk-{index:04d}.json").write_text(
+            '[{"start": 1.0, "end": 2.0, "text": "cached", "probability": 1.0}]'
+        )
+
+    transcribe_mod.transcribe_file(Path("book.m4b"), TranscriptionSettings(), tmp_path)
+    assert calls == ["chunk-0001.wav"]

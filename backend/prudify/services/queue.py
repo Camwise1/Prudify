@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from ..config import Config
 from ..core import audio as audio_mod
 from ..core.pipeline import PipelineCancelled, clean_part, pass_through_part, stage_fraction
+from ..core.reachability import check_dir
 from ..db import session_scope
 from ..models import Book, BookStatus, Job, JobStatus, Part
 from .events import bus
@@ -44,6 +45,9 @@ _STALE_PROGRESS_SECONDS = 30.0
 # those waits a stall. Quiet for this many typical steps is a stall.
 _STALE_STEPS = 3.0
 _MAX_TICKS = 500
+_CHUNK_CACHE_MAX_AGE_DAYS = 30
+# While suspended for an unreachable library, how often to look again.
+_RECHECK_SECONDS = 30.0
 
 _STAGE_ORDER = {
     "clean": ("probing", "transcribing", "matching", "rendering", "validating", "publishing"),
@@ -222,6 +226,10 @@ class JobQueue:
         self._history_rates: dict[str, float] = {}
         self._live_rates: dict[str, float] = {}
         self._durations_wake = threading.Event()
+        # Why the queue paused itself, if it did. Separate from a pause the
+        # user asked for: only this kind lifts itself when the cause clears.
+        self._suspended: str | None = None
+        self._last_recheck = 0.0
 
     # -- lifecycle --------------------------------------------------------
 
@@ -278,13 +286,61 @@ class JobQueue:
         log.info("Job queue stopped")
 
     def pause(self) -> None:
+        self._suspended = None
         self._paused.set()
-        bus.publish("queue.paused", {"paused": True})
+        bus.publish("queue.paused", {"paused": True, "reason": ""})
 
     def resume(self) -> None:
+        self._suspended = None
         self._paused.clear()
         self._wake.set()
-        bus.publish("queue.paused", {"paused": False})
+        bus.publish("queue.paused", {"paused": False, "reason": ""})
+
+    @property
+    def pause_reason(self) -> str:
+        return self._suspended or ""
+
+    def _suspend(self, reason: str) -> None:
+        """Pause because the library cannot be reached, until it can.
+
+        Carrying on would fail every queued book in seconds -- each one
+        finding the share gone -- and turn a NAS reboot into a queue of
+        failures to requeue by hand.
+        """
+        if self._suspended is None:
+            log.warning("Pausing the queue: %s", reason)
+        self._suspended = reason
+        self._paused.set()
+        bus.publish("queue.paused", {"paused": True, "reason": reason})
+
+    def _library_problem(self, library_id: str) -> str | None:
+        library = self.config.library_by_id(library_id)
+        if library is None:
+            return None
+        source = Path(library.source_path).expanduser()
+        problem = check_dir(source)
+        if problem:
+            return f"Library {library.name} is unreachable ({problem})"
+        output = Path(library.output_path).expanduser()
+        problem = check_dir(output if output.exists() else output.parent)
+        if problem:
+            return f"Clean library for {library.name} is unreachable ({problem})"
+        return None
+
+    def _recheck_suspension(self, now: float) -> None:
+        if self._suspended is None or now - self._last_recheck < _RECHECK_SECONDS:
+            return
+        self._last_recheck = now
+        problems = [
+            problem
+            for library in self.config.libraries
+            if library.enabled and (problem := self._library_problem(library.id))
+        ]
+        if problems:
+            self._suspended = problems[0]
+            return
+        log.info("Libraries reachable again; resuming the queue")
+        self.resume()
 
     @property
     def is_paused(self) -> bool:
@@ -395,12 +451,21 @@ class JobQueue:
         """
         while not self._stop.wait(_HEARTBEAT_SECONDS):
             now = time.monotonic()
+            try:
+                self._recheck_suspension(now)
+            except Exception:  # pragma: no cover - must never kill the heartbeat
+                log.exception("Library recheck failed")
             for state in list(self._active.values()):
                 updated = state.get("updated_at") or now
                 if now - updated < _HEARTBEAT_SECONDS:
                     continue  # real progress is already flowing
                 state["updated_at"] = now
                 bus.publish("job.progress", _progress_payload(state, now, self.rates()))
+
+    def _return_to_queue(self, job_id: int, reason: str) -> None:
+        with session_scope() as session:
+            _requeue_row(session, job_id, f"Waiting: {reason}")
+        bus.publish("job.requeued", {"job_id": job_id, "reason": reason})
 
     def _sweep_stale_work_dirs(self) -> None:
         """Delete scratch directories left behind by a job that will never finish.
@@ -446,6 +511,24 @@ class JobQueue:
             freed += _directory_size(entry)
             shutil.rmtree(entry, ignore_errors=True)
             removed += 1
+
+        # Chunk caches outlive their job on purpose, so a failed book resumes
+        # when it is queued again. One nobody has come back to in a month is
+        # for a book that was removed or re-encoded, and will never be used.
+        chunk_root = work_root / "chunks"
+        cutoff = time.time() - _CHUNK_CACHE_MAX_AGE_DAYS * 86400
+        if chunk_root.is_dir():
+            for entry in chunk_root.iterdir():
+                try:
+                    newest = max(
+                        [entry.stat().st_mtime] + [f.stat().st_mtime for f in entry.iterdir()]
+                    )
+                except OSError:
+                    continue
+                if newest < cutoff:
+                    freed += _directory_size(entry)
+                    shutil.rmtree(entry, ignore_errors=True)
+                    removed += 1
 
         if removed:
             log.info(
@@ -635,6 +718,12 @@ class JobQueue:
         library = self.config.library_by_id(library_id)
         work_root = self.config.resolved_work_dir() / f"job-{job_id}"
 
+        problem = self._library_problem(library_id)
+        if problem:
+            self._return_to_queue(job_id, problem)
+            self._suspend(problem)
+            return
+
         # Durations turn a fraction into a speed and an end time. A copy has
         # no use for them, and probing every part over a network share would
         # add more to it than the copy itself.
@@ -663,6 +752,8 @@ class JobQueue:
 
         def cancel() -> bool:
             return self._stop.is_set() or job_id in self._cancelled
+
+        interrupted: str | None = None
 
         succeeded = 0
         failed = 0
@@ -771,9 +862,27 @@ class JobQueue:
                 log.info("Job %s cancelled during part %s", job_id, part_id)
                 break
             except Exception as exc:
-                log.exception("Part failed: %s", source)
                 result = None
-                errors.append(f"{source.name}: {exc}")
+                failure = exc
+            else:
+                failure = None
+
+            if result is None or not result.ok:
+                # A part that failed because the share went away has not
+                # failed: it was interrupted. Book it as such, keep its place
+                # in the queue, and stop before the next part fails the same way.
+                problem = self._library_problem(library_id)
+                if problem:
+                    interrupted = problem
+                    with session_scope() as session:
+                        part = session.get(Part, part_id)
+                        if part is not None:
+                            part.status = BookStatus.QUEUED.value
+                    break
+
+            if failure is not None:
+                log.error("Part failed: %s", source, exc_info=failure)
+                errors.append(f"{source.name}: {failure}")
                 failed += 1
 
             with session_scope() as session:
@@ -830,6 +939,11 @@ class JobQueue:
             )
 
         cancelled = job_id in self._cancelled or self._stop.is_set()
+
+        if interrupted and not cancelled:
+            self._return_to_queue(job_id, interrupted)
+            self._suspend(interrupted)
+            return
 
         with session_scope() as session:
             job = session.get(Job, job_id)
@@ -904,6 +1018,21 @@ class JobQueue:
 
         if not self.config.processing.keep_work_files:
             shutil.rmtree(work_root, ignore_errors=True)
+
+
+def _requeue_row(session: Session, job_id: int, message: str) -> Job | None:
+    job = session.get(Job, job_id)
+    if job is None:
+        return None
+    job.status = JobStatus.PENDING.value
+    job.stage = ""
+    job.progress = 0.0
+    job.message = message
+    job.started_at = None
+    book = session.get(Book, job.book_id)
+    if book is not None:
+        book.status = BookStatus.QUEUED.value
+    return job
 
 
 def job_mode(job: Job) -> str:
