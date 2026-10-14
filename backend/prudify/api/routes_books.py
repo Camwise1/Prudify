@@ -13,10 +13,10 @@ from sqlalchemy.orm import Session
 from ..config import Config
 from ..core import audio as audio_mod
 from ..db import db_session, session_scope
-from ..models import Book, BookStatus, Part
+from ..models import Book, BookStatus, JobStatus, Part
 from ..schemas import BookDetail, BookOut, BookPage, PartOut
 from ..services import library as library_service
-from ..services.queue import get_queue
+from ..services.queue import get_queue, job_mode
 from .deps import get_config
 
 router = APIRouter(prefix="/books", tags=["books"])
@@ -243,6 +243,27 @@ def queue_book(
     if book is None:
         raise HTTPException(status_code=404, detail="Book not found")
     job = get_queue().enqueue_book(session, book, priority=priority)
+    return {"queued": True, "job_id": job.id if job else None}
+
+
+@router.post("/{book_id}/mark-clean")
+def mark_clean(book_id: str, session: Session = Depends(db_session)) -> dict:
+    """Copy a book known to be clean straight into the clean library.
+
+    It still goes through the queue -- on a worker of its own, so it is not
+    stuck behind a transcription -- because the copy can take minutes over a
+    network share and should be visible, cancellable and resumable like any
+    other job.
+    """
+    book = session.get(Book, book_id)
+    if book is None:
+        raise HTTPException(status_code=404, detail="Book not found")
+    job = get_queue().enqueue_book(session, book, priority=10, mode="copy")
+    if job is not None and job.status == JobStatus.RUNNING.value and job_mode(job) != "copy":
+        raise HTTPException(
+            status_code=409,
+            detail="This book is being cleaned right now; cancel that job first",
+        )
     return {"queued": True, "job_id": job.id if job else None}
 
 

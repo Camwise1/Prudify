@@ -36,6 +36,8 @@ _STAGE_WEIGHTS = {
     "rendering": (0.76, 0.96),
     "validating": (0.96, 0.99),
     "publishing": (0.99, 1.00),
+    # Only a pass-through job has this stage, and it is the whole of it.
+    "copying": (0.00, 1.00),
 }
 
 ProgressFn = Callable[[str, float, str], None]  # stage, 0..1 overall, message
@@ -111,6 +113,80 @@ def transcript_cache_path(config: Config, source: Path) -> Path:
 def _scaled(stage: str, fraction: float) -> float:
     lo, hi = _STAGE_WEIGHTS.get(stage, (0.0, 1.0))
     return lo + (hi - lo) * max(0.0, min(1.0, fraction))
+
+
+def stage_fraction(stage: str, overall: float) -> float:
+    """Invert :func:`_scaled`: how far through *this stage* a part-level value is.
+
+    Progress callbacks carry the part-level fraction so a single bar can be
+    drawn, but an estimate of the time left in a stage has to be extrapolated
+    from that stage's own fraction. Dividing elapsed stage time by the
+    part-level value instead made rendering look three-quarters done the
+    moment it started.
+    """
+    lo, hi = _STAGE_WEIGHTS.get(stage, (0.0, 1.0))
+    if hi <= lo:
+        return 1.0
+    return max(0.0, min(1.0, (overall - lo) / (hi - lo)))
+
+
+_COPY_BLOCK = 8 * 1024 * 1024
+
+
+def pass_through_part(
+    source: Path,
+    destination: Path,
+    overwrite: bool = False,
+    progress: ProgressFn | None = None,
+    cancel: Callable[[], bool] | None = None,
+) -> PartResult:
+    """Copy a part into the clean library unchanged, for a book known to be clean.
+
+    No transcription and no re-encode: the output is byte-identical to the
+    source. The copy is staged beside the destination and renamed into place,
+    so a cancelled or interrupted copy never leaves a truncated file where a
+    media server would pick it up as a finished book.
+    """
+    started = time.monotonic()
+    result = PartResult(source=source, destination=destination)
+
+    if not source.exists():
+        result.reason = "Source file no longer exists"
+        return result
+    if destination.exists() and not overwrite:
+        result.ok = True
+        result.reason = "Output already exists; left as it is"
+        return result
+
+    problem = writable_dir_error(destination.parent)
+    if problem:
+        result.reason = problem
+        return result
+
+    total = max(1, source.stat().st_size)
+    staged = destination.with_name(f".{destination.name}.prudify-copy")
+    copied = 0
+    try:
+        with source.open("rb") as reader, staged.open("wb") as writer:
+            while True:
+                if cancel and cancel():
+                    raise PipelineCancelled("Cancelled by user")
+                block = reader.read(_COPY_BLOCK)
+                if not block:
+                    break
+                writer.write(block)
+                copied += len(block)
+                if progress:
+                    progress("copying", copied / total, "Copying unchanged")
+        shutil.copystat(source, staged)
+        staged.replace(destination)
+    finally:
+        staged.unlink(missing_ok=True)
+
+    result.ok = True
+    result.reason = "Marked clean; copied unchanged"
+    result.elapsed_seconds = time.monotonic() - started
+    return result
 
 
 def free_space_mb(path: Path) -> float:

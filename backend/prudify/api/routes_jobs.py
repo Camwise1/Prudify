@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -11,14 +12,17 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..config import Config
 from ..db import db_session
-from ..models import Job, JobStatus
+from ..models import Book, Job, JobStatus, LogRecord
 from ..schemas import JobOut, QueueState
 from ..services.events import bus, format_sse
-from ..services.queue import get_queue
-from .deps import require_auth_stream
+from ..services.queue import get_queue, job_mode
+from .deps import get_config, require_auth_stream
 
 router = APIRouter(prefix="/queue", tags=["queue"])
+
+_OTHER_JOB = re.compile(r"Job \d+ ")
 
 # How long to wait for an event before emitting a keep-alive comment. Proxies
 # and load balancers commonly drop idle connections at 30-60s.
@@ -48,12 +52,50 @@ def queue_state(session: Session = Depends(db_session)) -> QueueState:
         .order_by(Job.finished_at.desc())
         .limit(25)
     ).scalars().all()
+    durations = dict(
+        session.execute(
+            select(Book.id, Book.duration).where(Book.id.in_([job.book_id for job in pending]))
+        ).all()
+    )
+    rows = []
+    for job in pending:
+        length = max(0.0, durations.get(job.book_id) or 0.0)
+        estimate = 60.0 if job_mode(job) == "copy" else queue.estimate_seconds(length)
+        rows.append(
+            JobOut.model_validate(job).model_copy(
+                update={"book_duration": length, "estimate_seconds": estimate}
+            )
+        )
+    active = queue.active_jobs
     return QueueState(
         paused=queue.is_paused,
-        active=queue.active_jobs,
-        pending=[JobOut.model_validate(job) for job in pending],
+        active=active,
+        pending=rows,
         recent=[JobOut.model_validate(job) for job in recent],
+        estimate=_queue_estimate(rows, active, queue.rates()),
     )
+
+
+def _queue_estimate(pending: list[JobOut], active: list[dict], rates: dict) -> dict:
+    """How long until the queue is empty, with what the figure rests on.
+
+    Books not yet probed and stages not yet measured are counted and reported
+    rather than silently left out, so the page can say "at least" when it
+    has to.
+    """
+    unknown = sum(1 for job in pending if job.estimate_seconds is None)
+    seconds = sum(job.estimate_seconds or 0.0 for job in pending)
+    for job in active:
+        if job.get("job_eta_seconds") is not None:
+            seconds += job["job_eta_seconds"]
+        else:
+            unknown += 1
+    return {
+        "pending_audio_seconds": round(sum(job.book_duration for job in pending), 1),
+        "seconds": round(seconds, 1),
+        "unknown_jobs": unknown,
+        "rates": {name: round(rate, 4) for name, rate in rates.items()},
+    }
 
 
 @router.get("/history")
@@ -143,6 +185,67 @@ def get_job(job_id: int, session: Session = Depends(db_session)) -> JobOut:
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return JobOut.model_validate(job)
+
+
+@router.get("/{job_id}/detail")
+def job_detail(
+    job_id: int,
+    session: Session = Depends(db_session),
+    config: Config = Depends(get_config),
+) -> dict:
+    """One job in full: its row, live state while running, the book, and its log.
+
+    The log is every record written while the job ran, less lines that name a
+    different job: the copier runs alongside the transcription worker, and its
+    progress is noise here. Unattributed lines -- ffmpeg, the engine -- stay,
+    since they are the context someone diagnosing a slow job wants.
+    """
+    job = session.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    book = session.get(Book, job.book_id)
+
+    logs = []
+    if job.started_at:
+        query = select(LogRecord).where(LogRecord.created_at >= job.started_at)
+        if job.finished_at:
+            query = query.where(LogRecord.created_at <= job.finished_at)
+        records = session.execute(
+            query.order_by(LogRecord.id.desc()).limit(200)
+        ).scalars().all()
+        own = f"Job {job_id} "
+        logs = [
+            {
+                "id": r.id,
+                "created_at": r.created_at,
+                "level": r.level,
+                "logger": r.logger,
+                "message": r.message,
+            }
+            for r in reversed(records)
+            if not _OTHER_JOB.match(r.message) or r.message.startswith(own)
+        ]
+
+    return {
+        "job": JobOut.model_validate(job).model_dump(mode="json"),
+        "mode": job_mode(job),
+        "live": get_queue().job_snapshot(job_id),
+        "book": {
+            "id": book.id,
+            "title": book.title,
+            "author": book.author,
+            "folder": book.folder,
+            "duration": max(0.0, book.duration or 0.0),
+            "part_count": len(book.parts),
+            "total_bytes": book.total_bytes,
+            "formats": book.formats,
+        }
+        if book
+        else None,
+        "engine": config.transcription.engine,
+        "model": config.transcription.model,
+        "logs": json.loads(json.dumps(logs, default=str)),
+    }
 
 
 @router.get("/{job_id}/result")

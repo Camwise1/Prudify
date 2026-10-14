@@ -266,9 +266,17 @@ class TestProgressPayload:
 
         # A quarter done after ten minutes means thirty minutes to go.
         payload = _progress_payload(
-            self._state(stage_fraction=0.25, fraction_changed_at=995.0), now=1000.0
+            self._state(stage_fraction=0.25, fraction_changed_at=1000.0), now=1000.0
         )
         assert payload["stage_eta_seconds"] == 1800.0
+
+    def test_the_estimate_counts_down_between_steps(self):
+        """Chunked transcription moves every few minutes; the ETA must not climb."""
+        from prudify.services.queue import _progress_payload
+
+        state = self._state(stage_fraction=0.25, fraction_changed_at=1000.0)
+        later = _progress_payload(state, now=1005.0)
+        assert later["stage_eta_seconds"] == 1795.0
 
     def test_a_stalled_stage_withholds_the_estimate(self):
         """Otherwise the remaining time climbs the longer you wait."""
@@ -283,10 +291,68 @@ class TestProgressPayload:
     def test_a_moving_stage_keeps_its_estimate(self):
         from prudify.services.queue import _progress_payload
 
-        state = self._state(stage_fraction=0.25, fraction_changed_at=995.0)
+        state = self._state(stage_fraction=0.25, fraction_changed_at=1000.0)
         payload = _progress_payload(state, now=1000.0)
         assert payload["stalled"] is False
         assert payload["stage_eta_seconds"] == 1800.0
+
+    def test_step_wise_progress_is_judged_by_its_own_pace(self):
+        """Five minutes between chunks is normal, not a stall."""
+        from prudify.services.queue import _progress_payload
+
+        ticks = [(400.0, 0.0), (700.0, 0.02), (1000.0, 0.04)]
+        state = self._state(
+            stage="transcribing",
+            stage_fraction=0.04,
+            fraction_changed_at=1000.0,
+            ticks=ticks,
+        )
+        assert _progress_payload(state, now=1200.0)["stalled"] is False
+        assert _progress_payload(state, now=1000.0 + 901.0)["stalled"] is True
+
+    def test_job_eta_adds_the_stages_still_to_come(self):
+        from prudify.services.queue import _progress_payload
+
+        state = self._state(
+            stage="transcribing",
+            stage_fraction=0.5,
+            fraction_changed_at=1000.0,
+            part_audio=[3600.0],
+        )
+        # 600s for half of transcription leaves 600s; rendering an hour at
+        # 0.1s per audio second adds 360s more.
+        payload = _progress_payload(state, now=1000.0, rates={"rendering": 0.1})
+        assert payload["stage_eta_seconds"] == 600.0
+        assert payload["job_eta_seconds"] == 960.0
+        # Half an hour of audio in 600s is three times real time.
+        assert payload["speed"] == 3.0
+
+    def test_job_eta_is_unknown_until_every_slow_stage_is_measured(self):
+        from prudify.services.queue import _progress_payload
+
+        state = self._state(
+            stage="transcribing",
+            stage_fraction=0.5,
+            fraction_changed_at=1000.0,
+            part_audio=[3600.0],
+        )
+        payload = _progress_payload(state, now=1000.0, rates={})
+        assert payload["stage_eta_seconds"] == 600.0
+        assert payload["job_eta_seconds"] is None
+
+    def test_rates_ignore_cached_and_copied_stages(self):
+        from prudify.services.queue import rates_from_history
+
+        rates = rates_from_history(
+            [
+                {"timings": {"audio_seconds": 3600, "stages": {"transcribing": 600}}},
+                # A cached transcript takes no time and must not drag the rate down.
+                {"timings": {"audio_seconds": 3600, "stages": {"transcribing": 0.2}}},
+                {"timings": {"audio_seconds": 7200, "stages": {"rendering": 720}}},
+                {"mode": "copy"},
+            ]
+        )
+        assert rates == {"transcribing": 600 / 3600, "rendering": 0.1}
 
     def test_the_heartbeat_thread_starts_with_the_queue(self, app_client):
         import threading
@@ -508,3 +574,52 @@ class TestStaticFileTraversal:
         body = response.text
         assert "root:x:0:0" not in body
         assert "api_key" not in body
+
+
+def test_mark_clean_copies_the_book_unchanged(app_client, tmp_path):
+    import time
+
+    client, _ = app_client
+    client.post("/api/v1/books/scan")
+    book_id = client.get("/api/v1/books").json()["items"][0]["id"]
+
+    job_id = client.post(f"/api/v1/books/{book_id}/mark-clean").json()["job_id"]
+    client.post("/api/v1/queue/resume")
+    for _ in range(100):
+        if client.get(f"/api/v1/books/{book_id}").json()["status"] == "cleaned":
+            break
+        time.sleep(0.05)
+
+    output = tmp_path / "clean/Author/Book/Book.m4b"
+    assert output.read_bytes() == b"\0" * 4096
+    assert not list(output.parent.glob(".*prudify-copy"))
+    detail = client.get(f"/api/v1/queue/{job_id}/detail").json()
+    assert detail["mode"] == "copy"
+    assert detail["job"]["status"] == "completed"
+
+
+def test_mark_clean_converts_a_waiting_job(app_client):
+    client, _ = app_client
+    client.post("/api/v1/books/scan")
+    book_id = client.get("/api/v1/books").json()["items"][0]["id"]
+
+    first = client.post(f"/api/v1/books/{book_id}/queue").json()["job_id"]
+    second = client.post(f"/api/v1/books/{book_id}/mark-clean").json()["job_id"]
+    assert first == second
+    detail = client.get(f"/api/v1/queue/{first}/detail").json()
+    assert detail["mode"] == "copy"
+    assert detail["live"] is None
+    assert detail["book"]["part_count"] == 1
+
+
+def test_queue_reports_an_estimate(app_client):
+    client, _ = app_client
+    client.post("/api/v1/books/scan")
+    book_id = client.get("/api/v1/books").json()["items"][0]["id"]
+    client.post(f"/api/v1/books/{book_id}/queue")
+
+    state = client.get("/api/v1/queue").json()
+    # Nothing has been measured yet, so the one book is counted as unknown
+    # rather than estimated at zero.
+    assert state["estimate"]["unknown_jobs"] == 1
+    assert state["pending"][0]["estimate_seconds"] is None

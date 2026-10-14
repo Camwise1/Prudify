@@ -88,6 +88,9 @@ class JobOut(BaseModel):
     queued_at: datetime | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    # Filled in for pending jobs on the queue page; zero means not yet probed.
+    book_duration: float = 0.0
+    estimate_seconds: float | None = None
 
     model_config = {"from_attributes": True}
 
@@ -97,6 +100,7 @@ class QueueState(BaseModel):
     active: list[dict[str, Any]] = Field(default_factory=list)
     pending: list[JobOut] = Field(default_factory=list)
     recent: list[JobOut] = Field(default_factory=list)
+    estimate: dict[str, Any] = Field(default_factory=dict)
 
 
 class SettingsOut(BaseModel):

@@ -85,6 +85,13 @@ export default function BookDetail({ bookId, onClose, onChanged }) {
             {book.monitored ? 'Stop monitoring' : 'Monitor'}
           </button>
           <button
+            disabled={busy || book.status === 'cleaned'}
+            title="You know this book is clean: skip transcription and copy it across unchanged"
+            onClick={() => act(() => api.markClean(book.id), 'Will copy across unchanged')}
+          >
+            Mark clean
+          </button>
+          <button
             className="primary"
             disabled={busy}
             onClick={() => act(() => api.queueBook(book.id), 'Added to the queue')}

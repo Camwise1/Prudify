@@ -31,11 +31,18 @@ def test_default_auto_chunks_long_files(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(transcribe_mod.audio_mod, "extract_pcm", fake_extract)
 
+    reports: list[tuple[float, str]] = []
     transcript = transcribe_mod.transcribe_file(
         Path("book.m4b"),
         TranscriptionSettings(chunk_minutes=0),
         tmp_path,
+        progress=lambda fraction, message: reports.append((fraction, message)),
     )
+
+    # Each label names the chunk being worked on, not the one just finished.
+    assert reports[0] == (0.0, "transcribing chunk 1/4")
+    assert reports[2] == (0.5, "transcribing chunk 3/4")
+    assert reports[-1][0] == 1.0
 
     assert transcript.duration == 2 * 60 * 60
     assert calls == [

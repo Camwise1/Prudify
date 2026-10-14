@@ -133,6 +133,7 @@ export const api = {
   book: (id) => request(`/books/${id}`),
   bookMatches: (id) => request(`/books/${id}/matches`),
   queueBook: (id) => request(`/books/${id}/queue`, { method: 'POST' }),
+  markClean: (id) => request(`/books/${id}/mark-clean`, { method: 'POST' }),
   queueAll: (libraryId, author) => {
     const params = new URLSearchParams()
     if (libraryId) params.set('library_id', libraryId)
@@ -156,6 +157,7 @@ export const api = {
   pause: () => request('/queue/pause', { method: 'POST' }),
   resume: () => request('/queue/resume', { method: 'POST' }),
   cancelJob: (id) => request(`/queue/${id}`, { method: 'DELETE' }),
+  jobDetail: (id) => request(`/queue/${id}/detail`),
   clearQueue: () => request('/queue/clear', { method: 'POST' }),
 
   // settings

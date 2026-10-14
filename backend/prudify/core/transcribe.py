@@ -658,6 +658,11 @@ def transcribe_file(
     for index in range(chunk_count):
         if cancel and cancel():
             raise TranscriptionError("Cancelled")
+        # Announced as each chunk starts, so the label names the chunk being
+        # worked on. Reported on completion it read "chunk 2/50" for the
+        # whole of chunk 3, and the fraction is the same either way.
+        if progress:
+            progress(index / chunk_count, f"transcribing chunk {index + 1}/{chunk_count}")
 
         core_start = index * chunk_seconds
         core_end = min(total, core_start + chunk_seconds)
@@ -698,8 +703,8 @@ def transcribe_file(
             ):
                 all_words.append(word)
 
-        if progress:
-            progress((index + 1) / chunk_count, f"transcribing chunk {index + 1}/{chunk_count}")
+    if progress:
+        progress(1.0, f"transcribed {chunk_count} chunks")
 
     all_words.sort(key=lambda w: w.start)
     return Transcript(

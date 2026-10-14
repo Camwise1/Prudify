@@ -10,7 +10,13 @@ from __future__ import annotations
 import pytest
 from prudify.core import audio as audio_mod
 from prudify.core.cancel import OperationCancelled
-from prudify.core.pipeline import PipelineCancelled, clean_part, transcript_cache_path
+from prudify.core.pipeline import (
+    PipelineCancelled,
+    clean_part,
+    pass_through_part,
+    stage_fraction,
+    transcript_cache_path,
+)
 from prudify.core.transcribe import Transcript, Word
 
 from .conftest import needs_ffmpeg, peak_db
@@ -282,3 +288,44 @@ class TestDestinationPreflight:
         assert not outcome.ok
         assert "work directory" in outcome.reason
 
+
+
+def test_stage_fraction_undoes_the_part_scaling():
+    # Rendering owns 0.76-0.96 of a part's bar; 0.86 is halfway through it.
+    assert stage_fraction("rendering", 0.86) == pytest.approx(0.5)
+    assert stage_fraction("rendering", 0.5) == 0.0
+    assert stage_fraction("copying", 0.3) == pytest.approx(0.3)
+
+
+class TestPassThrough:
+    def test_copies_byte_for_byte(self, tmp_path):
+        source = tmp_path / "in.m4b"
+        source.write_bytes(bytes(range(256)) * 100)
+        destination = tmp_path / "out/Book/in.m4b"
+        destination.parent.mkdir(parents=True)
+
+        result = pass_through_part(source, destination)
+
+        assert result.ok
+        assert destination.read_bytes() == source.read_bytes()
+        assert not list(destination.parent.glob(".*"))
+
+    def test_leaves_an_existing_output_alone(self, tmp_path):
+        source = tmp_path / "in.m4b"
+        source.write_bytes(b"new")
+        destination = tmp_path / "out.m4b"
+        destination.write_bytes(b"old")
+
+        assert pass_through_part(source, destination).ok
+        assert destination.read_bytes() == b"old"
+        assert pass_through_part(source, destination, overwrite=True).ok
+        assert destination.read_bytes() == b"new"
+
+    def test_cancelling_leaves_nothing_behind(self, tmp_path):
+        source = tmp_path / "in.m4b"
+        source.write_bytes(b"x" * 1024)
+        destination = tmp_path / "out.m4b"
+
+        with pytest.raises(PipelineCancelled):
+            pass_through_part(source, destination, cancel=lambda: True)
+        assert list(tmp_path.iterdir()) == [source]

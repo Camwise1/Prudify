@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../lib/api.js'
+import { parseDate } from '../lib/format.js'
 import { Empty, useToast } from '../components/ui.jsx'
 
 export default function Logs() {
@@ -78,7 +79,7 @@ export default function Logs() {
           <div className="log-list">
             {visible.map((entry) => (
               <div key={entry.id} className={`log-line ${entry.level}`}>
-                <span className="ts">{new Date(entry.created_at).toLocaleTimeString()}</span>
+                <span className="ts">{parseDate(entry.created_at).toLocaleTimeString()}</span>
                 <span className="lvl">{entry.level}</span>
                 <span>{entry.message}</span>
               </div>
