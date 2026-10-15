@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import errno
 import os
+import re
 import secrets
 import shutil
 from pathlib import Path
@@ -269,6 +270,48 @@ class PrescreenSettings(BaseModel):
         return [path.strip() for path in value if path.strip()]
 
 
+_CLOCK = re.compile(r"^([01]?\d|2[0-3]):[0-5]\d$")
+
+
+class ScheduleSettings(BaseModel):
+    """When transcription may run. Copies are cheap and are never held back."""
+
+    # Local-time window, "HH:MM". It may wrap midnight ("23:00" to "07:00").
+    # Both empty means any time.
+    start: str = ""
+    end: str = ""
+    # Hold transcription while anyone is playing something from Plex.
+    pause_while_plex_playing: bool = False
+
+    @field_validator("start", "end")
+    @classmethod
+    def _clock_time(cls, value: str) -> str:
+        value = value.strip()
+        if value and not _CLOCK.match(value):
+            raise ValueError("use 24-hour HH:MM, for example 23:00")
+        return value
+
+
+class AudiobookshelfSettings(BaseModel):
+    # e.g. http://localhost:9090. Empty turns the integration off.
+    url: str = ""
+    # An Audiobookshelf API key (Settings > API Keys there), with admin rights:
+    # starting a library scan needs them.
+    api_key: str = ""
+    # Audiobookshelf libraries to rescan after Prudify publishes a book.
+    library_ids: list[str] = Field(default_factory=list)
+
+
+class PlexSettings(BaseModel):
+    url: str = "http://localhost:32400"
+    token: str = ""
+
+
+class IntegrationSettings(BaseModel):
+    audiobookshelf: AudiobookshelfSettings = Field(default_factory=AudiobookshelfSettings)
+    plex: PlexSettings = Field(default_factory=PlexSettings)
+
+
 class Config(BaseModel):
     server: ServerSettings = Field(default_factory=ServerSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
@@ -278,6 +321,8 @@ class Config(BaseModel):
     output: OutputSettings = Field(default_factory=OutputSettings)
     processing: ProcessingSettings = Field(default_factory=ProcessingSettings)
     prescreen: PrescreenSettings = Field(default_factory=PrescreenSettings)
+    schedule: ScheduleSettings = Field(default_factory=ScheduleSettings)
+    integrations: IntegrationSettings = Field(default_factory=IntegrationSettings)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
     # --- paths -----------------------------------------------------------

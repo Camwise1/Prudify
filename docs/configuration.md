@@ -108,6 +108,20 @@ prescreen:
   ebook_paths: []          # folders of EPUBs; empty turns the ebook check off
   auto_mark_clean: true
 
+schedule:
+  start: ""                # "23:00" -- transcribe only from...
+  end: ""                  # "07:00" -- ...until; both empty means any time
+  pause_while_plex_playing: false
+
+integrations:
+  audiobookshelf:
+    url: ""                # e.g. http://localhost:9090
+    api_key: ""            # an admin's API key from Audiobookshelf
+    library_ids: []        # libraries to rescan after publishing
+  plex:
+    url: http://localhost:32400
+    token: ""
+
 log_level: INFO
 ```
 
@@ -171,6 +185,21 @@ ebook is DRM-free and has at least half the words a reading of that length
 implies; otherwise the result is shown on the book but the book is transcribed
 as usual. Any match means transcription still runs, because only the audio says
 where the words fall. MOBI, AZW3 and archived ebooks are not read.
+
+**`schedule`** keeps transcription to the hours you choose, and optionally off
+while Plex is playing something (paused streams do not count). No new book
+starts outside them, and a book already running stops at the end of its
+current 30-minute chunk; finished chunks are kept, so it carries on from there.
+Copies of books marked clean are cheap and are never held back. If Plex cannot
+be reached, nothing is held.
+
+**`integrations.audiobookshelf`** makes Prudify ask Audiobookshelf to rescan
+the chosen libraries after it publishes books, waiting until a minute has
+passed without another so a batch causes one scan. The API key needs admin
+rights, since starting a scan does. Tokens are never sent back to the browser;
+the settings page shows a placeholder that means "unchanged".
+
+For Home Assistant, see [home-assistant.md](home-assistant.md).
 
 ## Adding a library
 

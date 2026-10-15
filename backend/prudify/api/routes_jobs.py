@@ -70,6 +70,7 @@ def queue_state(session: Session = Depends(db_session)) -> QueueState:
     return QueueState(
         paused=queue.is_paused,
         paused_reason=queue.pause_reason,
+        held_reason=queue.held_reason,
         active=active,
         pending=rows,
         recent=[JobOut.model_validate(job) for job in recent],

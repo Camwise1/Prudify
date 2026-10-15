@@ -24,7 +24,7 @@ from ..config import Config, writable_dir_error
 from . import audio as audio_mod
 from . import matcher as matcher_mod
 from . import transcribe as transcribe_mod
-from .cancel import OperationCancelled
+from .cancel import OperationCancelled, OperationPaused
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +45,10 @@ ProgressFn = Callable[[str, float, str], None]  # stage, 0..1 overall, message
 
 class PipelineCancelled(OperationCancelled):
     pass
+
+
+class PipelinePaused(OperationPaused):
+    """Stopped between transcription chunks; queue the part again to resume."""
 
 
 @dataclass
@@ -228,6 +232,7 @@ def clean_part(
     progress: ProgressFn | None = None,
     cancel: Callable[[], bool] | None = None,
     extra_words: list[str] | None = None,
+    pause: Callable[[], bool] | None = None,
 ) -> PartResult:
     """Clean one audio file. Safe to call repeatedly; never touches the source."""
     started = time.monotonic()
@@ -324,7 +329,10 @@ def clean_part(
                 work_dir=chunks,
                 progress=t_progress,
                 cancel=cancel,
+                pause=pause,
             )
+        except OperationPaused as exc:
+            raise PipelinePaused(str(exc)) from exc
         except OperationCancelled as exc:
             raise PipelineCancelled("Cancelled by user") from exc
         if config.processing.keep_transcripts:

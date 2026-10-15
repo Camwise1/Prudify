@@ -20,12 +20,19 @@ from sqlalchemy.orm import Session
 
 from ..config import Config
 from ..core import audio as audio_mod
-from ..core.pipeline import PipelineCancelled, clean_part, pass_through_part, stage_fraction
+from ..core.pipeline import (
+    PipelineCancelled,
+    PipelinePaused,
+    clean_part,
+    pass_through_part,
+    stage_fraction,
+)
 from ..core.reachability import check_dir
 from ..db import session_scope
 from ..models import Book, BookStatus, Job, JobStatus, Part, Prescreen
 from . import prescreen as prescreen_mod
 from .events import bus
+from .integrations import AudiobookshelfNotifier, HoldCheck
 
 log = logging.getLogger(__name__)
 
@@ -232,6 +239,12 @@ class JobQueue:
         self._suspended: str | None = None
         # Books the background pass has already checked against an ebook.
         self._screened: set[str] = set()
+        # Why transcription is holding off (processing hours, Plex playing),
+        # or None. Not a pause: copies carry on, and nothing is shown as
+        # stopped -- the queue is waiting for its turn on the machine.
+        self._hold = HoldCheck(config)
+        self._held: str | None = None
+        self.audiobookshelf = AudiobookshelfNotifier(config)
         self._last_recheck = 0.0
 
     # -- lifecycle --------------------------------------------------------
@@ -280,6 +293,7 @@ class JobQueue:
         self._durations_wake.set()
 
     def stop(self, timeout: float = 10.0) -> None:
+        self.audiobookshelf.cancel()
         self._stop.set()
         self._wake.set()
         self._durations_wake.set()
@@ -302,6 +316,22 @@ class JobQueue:
     @property
     def pause_reason(self) -> str:
         return self._suspended or ""
+
+    @property
+    def held_reason(self) -> str:
+        return self._held or ""
+
+    def _update_hold(self) -> None:
+        reason = self._hold.reason()
+        if reason == self._held:
+            return
+        if reason:
+            log.info("Holding transcription: %s", reason)
+        else:
+            log.info("Transcription may run again")
+            self._wake.set()
+        self._held = reason
+        bus.publish("queue.held", {"reason": reason or ""})
 
     def _suspend(self, reason: str) -> None:
         """Pause because the library cannot be reached, until it can.
@@ -503,6 +533,7 @@ class JobQueue:
             now = time.monotonic()
             try:
                 self._recheck_suspension(now)
+                self._update_hold()
             except Exception:  # pragma: no cover - must never kill the heartbeat
                 log.exception("Library recheck failed")
             for state in list(self._active.values()):
@@ -717,6 +748,11 @@ class JobQueue:
                 self._wake.clear()
                 continue
 
+            if mode == "clean" and self._held:
+                self._wake.wait(timeout=5.0)
+                self._wake.clear()
+                continue
+
             job_id = self._claim(mode)
             if job_id is None:
                 self._wake.wait(timeout=5.0)
@@ -826,6 +862,7 @@ class JobQueue:
             return self._stop.is_set() or job_id in self._cancelled
 
         interrupted: str | None = None
+        held_back = False
 
         succeeded = 0
         failed = 0
@@ -929,9 +966,21 @@ class JobQueue:
                         work_dir=work_root / f"part-{part_id}",
                         progress=progress,
                         cancel=cancel,
+                        pause=lambda: self._held is not None,
                     )
             except PipelineCancelled:
                 log.info("Job %s cancelled during part %s", job_id, part_id)
+                break
+            except PipelinePaused as exc:
+                # Stopped between chunks with every finished chunk saved; the
+                # job keeps its place and picks up there when allowed to.
+                log.info("Job %s: %s (%s)", job_id, exc, self._held)
+                interrupted = self._held or "Holding transcription"
+                held_back = True
+                with session_scope() as session:
+                    part = session.get(Part, part_id)
+                    if part is not None:
+                        part.status = BookStatus.QUEUED.value
                 break
             except Exception as exc:
                 result = None
@@ -1014,7 +1063,8 @@ class JobQueue:
 
         if interrupted and not cancelled:
             self._return_to_queue(job_id, interrupted)
-            self._suspend(interrupted)
+            if not held_back:
+                self._suspend(interrupted)
             return
 
         with session_scope() as session:
@@ -1089,6 +1139,8 @@ class JobQueue:
 
         if not cancelled and mode == "clean":
             self._reload_history_rates()
+        if succeeded and not cancelled:
+            self.audiobookshelf.book_published()
 
         if not self.config.processing.keep_work_files:
             shutil.rmtree(work_root, ignore_errors=True)

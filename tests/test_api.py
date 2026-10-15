@@ -799,3 +799,94 @@ def test_the_book_list_can_show_only_books_with_words_silenced(app_client):
     page = client.get("/api/v1/books?has_matches=true&sort=matches&order=desc").json()
     assert page["total"] == 1
     assert page["items"][0]["match_count"] == 3
+
+
+class TestHoldingAndSecrets:
+    def test_tokens_are_never_sent_back_and_survive_a_save(self, app_client):
+        client, config = app_client
+        client.put(
+            "/api/v1/settings",
+            json={"integrations": {"plex": {"url": "http://plex:32400", "token": "secret"}}},
+        )
+        sent = client.get("/api/v1/settings").json()["integrations"]["plex"]
+        assert sent["token"] == "********"
+
+        # The page saves what it was given; the placeholder must not overwrite.
+        client.put("/api/v1/settings", json={"integrations": {"plex": sent}})
+        assert config.integrations.plex.token == "secret"
+
+    def test_a_held_queue_still_copies(self, app_client, tmp_path):
+        import time
+
+        from prudify.services.queue import get_queue
+
+        client, _ = app_client
+        client.post("/api/v1/books/scan")
+        book_id = client.get("/api/v1/books").json()["items"][0]["id"]
+        queue = get_queue()
+        queue._held = "Outside processing hours (23:00–07:00)"
+
+        client.post(f"/api/v1/books/{book_id}/mark-clean")
+        client.post("/api/v1/queue/resume")
+        for _ in range(100):
+            if client.get(f"/api/v1/books/{book_id}").json()["status"] == "cleaned":
+                break
+            time.sleep(0.05)
+        assert (tmp_path / "clean/Author/Book/Book.m4b").exists()
+        assert client.get("/api/v1/queue").json()["held_reason"].startswith("Outside")
+
+    def test_a_held_queue_does_not_start_transcribing(self, app_client):
+        import time
+
+        from prudify.services.queue import get_queue
+
+        client, _ = app_client
+        client.post("/api/v1/books/scan")
+        book_id = client.get("/api/v1/books").json()["items"][0]["id"]
+        get_queue()._held = "Plex is playing (1 stream)"
+        job_id = client.post(f"/api/v1/books/{book_id}/queue").json()["job_id"]
+        client.post("/api/v1/queue/resume")
+        time.sleep(0.5)
+        state = client.get("/api/v1/queue").json()
+        assert [job["id"] for job in state["pending"]] == [job_id]
+        assert state["active"] == []
+
+    def test_a_book_held_mid_transcription_keeps_its_place(self, app_client, monkeypatch):
+        import time
+
+        from prudify.core.pipeline import PipelinePaused
+        from prudify.services import queue as queue_mod
+
+        client, _ = app_client
+        client.post("/api/v1/books/scan")
+        book_id = client.get("/api/v1/books").json()["items"][0]["id"]
+        queue = queue_mod.get_queue()
+
+        def paused(**_kwargs):
+            queue._held = "Outside processing hours (23:00–07:00)"
+            raise PipelinePaused("Paused before chunk 3/50")
+
+        monkeypatch.setattr(queue_mod, "clean_part", paused)
+        job_id = client.post(f"/api/v1/books/{book_id}/queue").json()["job_id"]
+        client.post("/api/v1/queue/resume")
+        for _ in range(100):
+            state = client.get("/api/v1/queue").json()
+            if state["pending"] and state["pending"][0]["message"].startswith("Waiting"):
+                break
+            time.sleep(0.05)
+        assert [job["id"] for job in state["pending"]] == [job_id]
+        assert "processing hours" in state["pending"][0]["message"]
+        # Holding is not a pause: nothing was suspended.
+        assert state["paused"] is False
+
+    def test_summary_for_home_assistant(self, app_client):
+        client, _ = app_client
+        client.post("/api/v1/books/scan")
+        body = client.get("/api/v1/system/summary").json()
+        assert body["state"] == "paused"  # the fixture pauses the queue
+        assert body["books"] == 1
+        assert body["active"] is None
+        assert set(body) >= {
+            "version", "pending", "queue_finishes_at", "instances_silenced",
+            "muted_seconds", "last_finished", "held_reason", "paused_reason",
+        }

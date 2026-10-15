@@ -23,6 +23,7 @@ from ..services import library as library_service
 from ..services.events import bus
 from ..services.queue import get_queue
 from .deps import get_config
+from .routes_integrations import SECRET_PLACEHOLDER
 
 router = APIRouter(tags=["settings"])
 
@@ -37,9 +38,24 @@ def _user_wordlist_dir(config: Config) -> Path:
     return directory
 
 
+def _masked(config: Config) -> SettingsOut:
+    """Settings for the browser, with integration secrets replaced.
+
+    A token sent to every page load is a token in every browser cache and
+    screenshot. The placeholder goes back on save and means "unchanged".
+    """
+    data = config.model_dump()
+    services = data["integrations"]
+    if services["audiobookshelf"]["api_key"]:
+        services["audiobookshelf"]["api_key"] = SECRET_PLACEHOLDER
+    if services["plex"]["token"]:
+        services["plex"]["token"] = SECRET_PLACEHOLDER
+    return SettingsOut(**data)
+
+
 @router.get("/settings", response_model=SettingsOut)
 def get_settings(config: Config = Depends(get_config)) -> SettingsOut:
-    return SettingsOut(**config.model_dump())
+    return _masked(config)
 
 
 @router.put("/settings", response_model=SettingsOut)
@@ -54,6 +70,11 @@ def update_settings(
             config.log_level = values
             continue
         current = getattr(config, section)
+        if section == "integrations":
+            for service, key in (("audiobookshelf", "api_key"), ("plex", "token")):
+                sent = values.get(service, {})
+                if sent.get(key) == SECRET_PLACEHOLDER:
+                    sent[key] = getattr(getattr(current, service), key)
         setattr(config, section, type(current).model_validate(values))
 
     save_config(config)
@@ -61,7 +82,7 @@ def update_settings(
     if {"prescreen", "filtering"} & data.keys():
         get_queue().settings_changed()
     bus.publish("settings.updated", {"sections": list(data.keys())})
-    return SettingsOut(**config.model_dump())
+    return _masked(config)
 
 
 @router.post("/settings/regenerate-api-key")

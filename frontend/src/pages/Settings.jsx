@@ -73,6 +73,8 @@ export default function Settings({ settings, onSaved }) {
             { id: 'output', label: 'Output' },
             { id: 'processing', label: 'Processing' },
             { id: 'ebooks', label: 'Ebook check' },
+            { id: 'schedule', label: 'Schedule' },
+            { id: 'integrations', label: 'Integrations' },
             { id: 'security', label: 'Security' },
           ]}
         />
@@ -488,6 +490,54 @@ export default function Settings({ settings, onSaved }) {
         </div>
       ) : null}
 
+      {tab === 'schedule' ? (
+        <div className="card">
+          <p className="dim" style={{ marginTop: 0 }}>
+            Transcription works this machine hard. Outside these hours, or while Plex is playing, no
+            new book starts, and one already running stops at the end of its current 30-minute chunk
+            and carries on from there later. Copies of books marked clean are not held.
+          </p>
+          <div className="row">
+            <Field label="Transcribe from" hint="Leave both empty for any time.">
+              <input
+                type="time"
+                value={draft.schedule?.start || ''}
+                onChange={(e) => update('schedule', 'start', e.target.value)}
+              />
+            </Field>
+            <Field label="Until" hint="May be earlier than the start, for overnight.">
+              <input
+                type="time"
+                value={draft.schedule?.end || ''}
+                onChange={(e) => update('schedule', 'end', e.target.value)}
+              />
+            </Field>
+          </div>
+          <Check
+            label="Wait while Plex is playing something"
+            hint="Needs the Plex token on the Integrations tab. Paused streams do not count."
+            checked={!!draft.schedule?.pause_while_plex_playing}
+            onChange={(value) => update('schedule', 'pause_while_plex_playing', value)}
+          />
+        </div>
+      ) : null}
+
+      {tab === 'integrations' ? (
+        <IntegrationsTab
+          draft={draft}
+          onChange={(service, key, value) => {
+            setDraft({
+              ...draft,
+              integrations: {
+                ...draft.integrations,
+                [service]: { ...draft.integrations[service], [key]: value },
+              },
+            })
+            setDirty(true)
+          }}
+        />
+      ) : null}
+
       {tab === 'security' ? (
         <div className="card">
           <Field
@@ -869,5 +919,160 @@ function LibraryModal({ library, onClose, onSaved }) {
         />
       </Field>
     </Modal>
+  )
+}
+
+function IntegrationsTab({ draft, onChange }) {
+  const toast = useToast()
+  const abs = draft.integrations.audiobookshelf
+  const plex = draft.integrations.plex
+  const [libraries, setLibraries] = useState(null)
+  const [plexResult, setPlexResult] = useState('')
+
+  const loadLibraries = async () => {
+    try {
+      const body = await api.absLibraries({ url: abs.url, api_key: abs.api_key })
+      setLibraries(body.libraries)
+    } catch (err) {
+      setLibraries(null)
+      toast(err.message, 'error')
+    }
+  }
+
+  const toggleLibrary = (id, on) => {
+    const ids = new Set(abs.library_ids || [])
+    if (on) ids.add(id)
+    else ids.delete(id)
+    onChange('audiobookshelf', 'library_ids', [...ids])
+  }
+
+  return (
+    <>
+      <div className="card mb">
+        <div className="card-head">
+          <h2>Audiobookshelf</h2>
+        </div>
+        <p className="dim" style={{ marginTop: 0 }}>
+          After Prudify publishes a book, it asks Audiobookshelf to rescan, so the clean copy shows
+          up straight away. A burst of books causes one scan, a minute after the last.
+        </p>
+        <div className="row">
+          <Field label="Address" hint="As this machine reaches it, e.g. http://localhost:9090">
+            <input
+              value={abs.url}
+              placeholder="http://localhost:9090"
+              onChange={(e) => onChange('audiobookshelf', 'url', e.target.value)}
+            />
+          </Field>
+          <Field label="API key" hint="Audiobookshelf → Settings → API Keys, from an admin user.">
+            <input
+              type="password"
+              autoComplete="off"
+              value={abs.api_key}
+              onChange={(e) => onChange('audiobookshelf', 'api_key', e.target.value)}
+            />
+          </Field>
+        </div>
+        <div className="flex mb">
+          <button className="small" disabled={!abs.url || !abs.api_key} onClick={loadLibraries}>
+            Load libraries
+          </button>
+          <button
+            className="small"
+            disabled={!(abs.library_ids || []).length}
+            title="Uses the saved settings"
+            onClick={async () => {
+              try {
+                const result = await api.absScan()
+                toast(
+                  result.errors?.length ? result.errors[0] : 'Audiobookshelf is rescanning',
+                  result.errors?.length ? 'error' : 'success',
+                )
+              } catch (err) {
+                toast(err.message, 'error')
+              }
+            }}
+          >
+            Scan now
+          </button>
+        </div>
+        {libraries ? (
+          libraries.map((library) => (
+            <Check
+              key={library.id}
+              label={library.name}
+              hint={library.folders.join(', ')}
+              checked={(abs.library_ids || []).includes(library.id)}
+              onChange={(on) => toggleLibrary(library.id, on)}
+            />
+          ))
+        ) : (abs.library_ids || []).length ? (
+          <div className="faint">
+            Rescanning {abs.library_ids.length} librar{abs.library_ids.length === 1 ? 'y' : 'ies'}.
+            Load libraries to change which.
+          </div>
+        ) : null}
+      </div>
+
+      <div className="card mb">
+        <div className="card-head">
+          <h2>Plex</h2>
+        </div>
+        <p className="dim" style={{ marginTop: 0 }}>
+          Used by the Schedule tab to wait while something is playing.
+        </p>
+        <div className="row">
+          <Field label="Address">
+            <input
+              value={plex.url}
+              onChange={(e) => onChange('plex', 'url', e.target.value)}
+            />
+          </Field>
+          <Field
+            label="Token"
+            hint="Your X-Plex-Token; Plex's support article “Finding an authentication token” shows where."
+          >
+            <input
+              type="password"
+              autoComplete="off"
+              value={plex.token}
+              onChange={(e) => onChange('plex', 'token', e.target.value)}
+            />
+          </Field>
+        </div>
+        <div className="flex">
+          <button
+            className="small"
+            disabled={!plex.url || !plex.token}
+            onClick={async () => {
+              try {
+                const body = await api.plexTest({ url: plex.url, token: plex.token })
+                setPlexResult(
+                  `Connected: ${body.playing} stream${body.playing === 1 ? '' : 's'} playing now`,
+                )
+              } catch (err) {
+                setPlexResult('')
+                toast(err.message, 'error')
+              }
+            }}
+          >
+            Test
+          </button>
+          {plexResult ? <span className="faint">{plexResult}</span> : null}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head">
+          <h2>Home Assistant</h2>
+        </div>
+        <p className="dim" style={{ margin: 0 }}>
+          Install the Prudify integration through HACS: HACS → ⋮ → Custom repositories, add{' '}
+          <code>https://github.com/Camwise1/prudify</code> as an <b>Integration</b>, install it,
+          restart Home Assistant, then add “Prudify” under Settings → Devices &amp; services. It
+          asks for this server&apos;s address and the API key on the Security tab.
+        </p>
+      </div>
+    </>
   )
 }

@@ -16,7 +16,14 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
-from .api import routes_auth, routes_books, routes_jobs, routes_settings, routes_system
+from .api import (
+    routes_auth,
+    routes_books,
+    routes_integrations,
+    routes_jobs,
+    routes_settings,
+    routes_system,
+)
 from .api.deps import require_auth
 from .config import Config, load_config
 from .db import init_db, session_scope
@@ -169,6 +176,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     api.include_router(routes_jobs.router)
     api.include_router(routes_settings.router)
     api.include_router(routes_system.router)
+    api.include_router(routes_integrations.router)
     app.include_router(api)
 
     # Unauthenticated liveness probe for Docker / k8s.

@@ -26,7 +26,7 @@ from typing import Any
 
 from ..config import TranscriptionSettings, available_cpus
 from . import audio as audio_mod
-from .cancel import OperationCancelled
+from .cancel import OperationCancelled, OperationPaused
 
 log = logging.getLogger(__name__)
 
@@ -618,8 +618,14 @@ def transcribe_file(
     work_dir: Path,
     progress: ProgressFn | None = None,
     cancel: Callable[[], bool] | None = None,
+    pause: Callable[[], bool] | None = None,
 ) -> Transcript:
     """Transcribe a media file, chunking only if the user asked for it.
+
+    ``pause`` is asked before each chunk that still needs transcribing; when it
+    says so, :class:`OperationPaused` is raised with every finished chunk
+    saved, so the book picks up there next time. Unchunked runs have no such
+    boundary and finish regardless.
 
     Chunk results are cached on disk so an interrupted run resumes where it
     stopped instead of starting the book over.
@@ -682,6 +688,8 @@ def transcribe_file(
 
         cache = work_dir / f"chunk-{index:04d}.json"
         chunk_words = _read_chunk_cache(cache)
+        if chunk_words is None and pause and pause():
+            raise OperationPaused(f"Paused before chunk {index + 1}/{chunk_count}")
         if chunk_words is None:
             wav = work_dir / f"chunk-{index:04d}.wav"
             audio_mod.extract_pcm(

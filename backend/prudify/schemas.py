@@ -9,10 +9,12 @@ from pydantic import BaseModel, Field
 
 from .config import (
     FilterSettings,
+    IntegrationSettings,
     LibrarySettings,
     OutputSettings,
     PrescreenSettings,
     ProcessingSettings,
+    ScheduleSettings,
     ServerSettings,
     TranscriptionSettings,
 )
@@ -101,6 +103,9 @@ class QueueState(BaseModel):
     # Set when the queue paused itself (an unreachable library); it resumes
     # on its own when the cause clears.
     paused_reason: str = ""
+    # Set while transcription waits for processing hours or for Plex to
+    # stop playing. Copies still run.
+    held_reason: str = ""
     active: list[dict[str, Any]] = Field(default_factory=list)
     pending: list[JobOut] = Field(default_factory=list)
     recent: list[JobOut] = Field(default_factory=list)
@@ -115,6 +120,8 @@ class SettingsOut(BaseModel):
     output: OutputSettings
     processing: ProcessingSettings
     prescreen: PrescreenSettings = Field(default_factory=PrescreenSettings)
+    schedule: ScheduleSettings = Field(default_factory=ScheduleSettings)
+    integrations: IntegrationSettings = Field(default_factory=IntegrationSettings)
     log_level: str
 
 
@@ -125,6 +132,8 @@ class SettingsIn(BaseModel):
     output: OutputSettings | None = None
     processing: ProcessingSettings | None = None
     prescreen: PrescreenSettings | None = None
+    schedule: ScheduleSettings | None = None
+    integrations: IntegrationSettings | None = None
     log_level: str | None = None
 
 

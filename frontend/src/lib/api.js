@@ -160,6 +160,13 @@ export const api = {
   resume: () => request('/queue/resume', { method: 'POST' }),
   cancelJob: (id) => request(`/queue/${id}`, { method: 'DELETE' }),
   jobDetail: (id) => request(`/queue/${id}/detail`),
+
+  // integrations
+  absLibraries: (body) =>
+    request('/integrations/audiobookshelf/libraries', { method: 'POST', body }),
+  absScan: () => request('/integrations/audiobookshelf/scan', { method: 'POST' }),
+  plexTest: (body) =>
+    request('/integrations/plex/test', { method: 'POST', body }),
   clearQueue: () => request('/queue/clear', { method: 'POST' }),
 
   // settings
@@ -196,6 +203,7 @@ export function openEventStream(onEvent) {
     'job.cancelled',
     'queue.paused',
     'job.requeued',
+    'queue.held',
     'queue.cleared',
     'queue.cooldown',
     'queue.auto_enqueued',

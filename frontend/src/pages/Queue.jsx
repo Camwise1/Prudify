@@ -57,6 +57,12 @@ export default function Queue({ queue, onRefresh }) {
         {queue?.paused ? <span className="pill partial">Paused</span> : null}
       </div>
 
+      {queue?.held_reason && !queue?.paused ? (
+        <Banner tone="info">
+          <b>Transcription is waiting.</b> {queue.held_reason}. It carries on by itself when
+          that changes; books marked clean are still copied in the meantime.
+        </Banner>
+      ) : null}
       {queue?.paused_reason ? (
         <Banner tone="warn">
           <b>Paused automatically.</b> {queue.paused_reason}. Nothing has been marked failed;
