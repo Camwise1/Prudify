@@ -8,7 +8,7 @@ Watches your library, transcribes new books with Whisper, and writes a cleaned
 copy to a second folder — chapters, cover art, tags and running time intact.
 Your originals are never touched.
 
-[Install](#install) · [How it works](#how-it-works) · [Configuration](docs/configuration.md) · [Wordlists](docs/wordlists.md) · [FAQ](#faq)
+[Install](#install) · [How it works](#how-it-works) · [Configuration](docs/configuration.md) · [Wordlists](docs/wordlists.md) · [Home Assistant](docs/home-assistant.md) · [FAQ](#faq)
 
 </div>
 
@@ -56,6 +56,15 @@ that describes this honestly.
 - **Survives being stopped.** A container killed mid-render leaves its job
   requeued rather than failed, resumes from the cached transcript, and its
   scratch files are collected on the next start.
+- **Skips work it does not need.** *Mark clean* copies a book you know is
+  clean straight across, and with an ebook folder configured, a queued book
+  whose EPUB has no matches is copied rather than transcribed.
+- **Keeps out of the way.** Set processing hours, or wait while Plex is
+  playing; a long book stops between chunks and picks up there later. A NAS
+  that drops off the network pauses the queue instead of failing it.
+- **Tells Audiobookshelf** to rescan once books are published, and has a
+  [Home Assistant integration](docs/home-assistant.md) (installable through
+  HACS) with sensors, a pause switch and events for notifications.
 - **Never writes to your source files.** Mount them read-only if you want the
   guarantee enforced rather than promised.
 
@@ -288,7 +297,9 @@ backend/prudify/
   api/         FastAPI routers
   wordlists/   bundled lists
 frontend/      React + Vite UI (built into backend/prudify/static)
+custom_components/prudify/  Home Assistant integration (installed via HACS)
 tests/         pytest suite
+tests_ha/      the integration's tests, run against Home Assistant's harness
 ```
 
 `core/` has no knowledge of the database or the web server, which is what makes

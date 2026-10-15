@@ -1,0 +1,98 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Prudify",
+        "description": "The address Prudify's web UI is on, and its API key (Settings → Security in Prudify).",
+        "data": {
+          "url": "Address",
+          "api_key": "API key"
+        },
+        "data_description": {
+          "url": "For example http://192.168.1.20:8317",
+          "api_key": "Shown under Settings → Security in Prudify"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Prudify's API key changed",
+        "description": "Enter the new API key from Settings → Security in Prudify.",
+        "data": {
+          "api_key": "API key"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach Prudify at that address.",
+      "invalid_auth": "Prudify did not accept that API key."
+    },
+    "abort": {
+      "already_configured": "That Prudify server is already set up.",
+      "reauth_successful": "The new API key works."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "processing": "Processing",
+          "idle": "Idle",
+          "paused": "Paused",
+          "suspended": "Paused: library unreachable",
+          "holding": "Waiting for its hours"
+        }
+      },
+      "current_book": {
+        "name": "Current book"
+      },
+      "progress": {
+        "name": "Progress"
+      },
+      "book_finishes": {
+        "name": "Current book finishes"
+      },
+      "speed": {
+        "name": "Speed"
+      },
+      "queue": {
+        "name": "Books waiting"
+      },
+      "queue_finishes": {
+        "name": "Queue finishes"
+      },
+      "books_cleaned": {
+        "name": "Books cleaned"
+      },
+      "books_failed": {
+        "name": "Books failed"
+      },
+      "books_waiting": {
+        "name": "Books not yet cleaned"
+      },
+      "instances_silenced": {
+        "name": "Instances silenced"
+      },
+      "audio_muted": {
+        "name": "Audio muted"
+      },
+      "last_finished": {
+        "name": "Last finished"
+      }
+    },
+    "binary_sensor": {
+      "library_problem": {
+        "name": "Library unreachable"
+      }
+    },
+    "switch": {
+      "queue_running": {
+        "name": "Queue"
+      }
+    },
+    "button": {
+      "scan_library": {
+        "name": "Scan library"
+      }
+    }
+  }
+}

@@ -35,3 +35,4 @@ Thumbs.db
 
 # Local secrets (SMB credentials for the Windows compose overlay)
 .env
+.venv-ha/

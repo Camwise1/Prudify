@@ -1,0 +1,12 @@
+{
+  "domain": "prudify",
+  "name": "Prudify",
+  "codeowners": ["@Camwise1"],
+  "config_flow": true,
+  "documentation": "https://github.com/Camwise1/prudify/blob/main/docs/home-assistant.md",
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/Camwise1/prudify/issues",
+  "requirements": [],
+  "version": "2.1.0"
+}

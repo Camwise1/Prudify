@@ -1,0 +1,62 @@
+{
+  "entity": {
+    "sensor": {
+      "status": {
+        "default": "mdi:book-cancel",
+        "state": {
+          "processing": "mdi:book-sync",
+          "idle": "mdi:book-check",
+          "paused": "mdi:pause-circle",
+          "suspended": "mdi:nas",
+          "holding": "mdi:clock-outline"
+        }
+      },
+      "current_book": {
+        "default": "mdi:book-open-variant"
+      },
+      "progress": {
+        "default": "mdi:progress-clock"
+      },
+      "book_finishes": {
+        "default": "mdi:timer-sand"
+      },
+      "speed": {
+        "default": "mdi:speedometer"
+      },
+      "queue": {
+        "default": "mdi:format-list-numbered"
+      },
+      "queue_finishes": {
+        "default": "mdi:calendar-clock"
+      },
+      "books_cleaned": {
+        "default": "mdi:book-check"
+      },
+      "books_failed": {
+        "default": "mdi:book-alert"
+      },
+      "books_waiting": {
+        "default": "mdi:book-clock"
+      },
+      "instances_silenced": {
+        "default": "mdi:volume-off"
+      },
+      "audio_muted": {
+        "default": "mdi:timer-off"
+      },
+      "last_finished": {
+        "default": "mdi:book-arrow-right"
+      }
+    },
+    "switch": {
+      "queue_running": {
+        "default": "mdi:play-pause"
+      }
+    },
+    "button": {
+      "scan_library": {
+        "default": "mdi:folder-search"
+      }
+    }
+  }
+}
