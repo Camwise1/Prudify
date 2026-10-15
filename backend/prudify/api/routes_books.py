@@ -29,6 +29,7 @@ def list_books(
     q: str | None = Query(default=None, description="Search title or author"),
     status: str | None = Query(default=None),
     author: str | None = Query(default=None, description="Exact author match"),
+    has_matches: bool = Query(default=False, description="Only books with words silenced"),
     library_id: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=500),
@@ -48,6 +49,8 @@ def list_books(
         filters.append(Book.author == author)
     if library_id:
         filters.append(Book.library_id == library_id)
+    if has_matches:
+        filters.append(Book.match_count > 0)
     for condition in filters:
         query = query.where(condition)
         count_query = count_query.where(condition)

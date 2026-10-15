@@ -264,6 +264,7 @@ function Shell() {
             initialStatus={params.status || ''}
             initialAuthor={params.author || ''}
             initialBook={params.book || ''}
+            initialMatches={params.matches === '1'}
           />
         ) : null}
         {route === 'authors' ? (

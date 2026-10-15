@@ -783,3 +783,19 @@ def test_a_book_whose_ebook_is_clean_is_copied_not_transcribed(app_client, tmp_p
     assert (tmp_path / "clean/Author/Book/Book.m4b").read_bytes() == b"\0" * 4096
     assert client.get(f"/api/v1/books/{book_id}/prescreen").json()["result"]["clean"]
     prescreen.forget_index()
+
+
+def test_the_book_list_can_show_only_books_with_words_silenced(app_client):
+    from prudify.db import session_scope
+    from prudify.models import Book
+
+    client, _ = app_client
+    client.post("/api/v1/books/scan")
+    assert client.get("/api/v1/books?has_matches=true").json()["total"] == 0
+
+    with session_scope() as session:
+        session.query(Book).update({Book.match_count: 3})
+        session.commit()
+    page = client.get("/api/v1/books?has_matches=true&sort=matches&order=desc").json()
+    assert page["total"] == 1
+    assert page["items"][0]["match_count"] == 3

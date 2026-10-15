@@ -97,6 +97,8 @@ export default function Dashboard({ status, queue, onNavigate, onRefresh }) {
           label="Instances silenced"
           value={(stats.total_matches ?? 0).toLocaleString()}
           sub={`${formatDuration(stats.total_muted_seconds)} of audio muted`}
+          title="Show the books those came from, most first"
+          onClick={() => onNavigate('library?matches=1')}
         />
         <Stat
           label="Queue"

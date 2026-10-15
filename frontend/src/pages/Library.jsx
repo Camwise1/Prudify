@@ -11,13 +11,16 @@ export default function Library({
   initialStatus = '',
   initialAuthor = '',
   initialBook = '',
+  initialMatches = false,
 }) {
   const toast = useToast()
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState(initialStatus)
   const [author, setAuthor] = useState(initialAuthor)
-  const [sort, setSort] = useState('author')
-  const [order, setOrder] = useState('asc')
+  const [matchesOnly, setMatchesOnly] = useState(initialMatches)
+  // Arriving to see what was silenced, the worst offenders come first.
+  const [sort, setSort] = useState(initialMatches ? 'matches' : 'author')
+  const [order, setOrder] = useState(initialMatches ? 'desc' : 'asc')
   const [page, setPage] = useState(1)
   const [data, setData] = useState({ items: [], total: 0 })
   const [loading, setLoading] = useState(true)
@@ -31,21 +34,27 @@ export default function Library({
       if (query.trim()) params.q = query.trim()
       if (status) params.status = status
       if (author) params.author = author
+      if (matchesOnly) params.has_matches = true
       setData(await api.books(params))
     } catch (err) {
       toast(err.message, 'error')
     } finally {
       setLoading(false)
     }
-  }, [page, sort, order, query, status, author, toast])
+  }, [page, sort, order, query, status, author, matchesOnly, toast])
 
   // Arriving from a dashboard tile or an author changes the filter under us;
   // the page resets too, or you land on page 3 of a list that now has one.
   useEffect(() => {
     setStatus(initialStatus)
     setAuthor(initialAuthor)
+    setMatchesOnly(initialMatches)
+    if (initialMatches) {
+      setSort('matches')
+      setOrder('desc')
+    }
     setPage(1)
-  }, [initialStatus, initialAuthor])
+  }, [initialStatus, initialAuthor, initialMatches])
 
   // A link that names a book opens it, which is what lets every list in the
   // app -- not just this table -- lead to the detail view.
@@ -108,6 +117,18 @@ export default function Library({
           <option value="ignored">Ignored</option>
           <option value="missing">Missing</option>
         </select>
+        {matchesOnly ? (
+          <button
+            className="small"
+            title="Show books with nothing silenced too"
+            onClick={() => {
+              setMatchesOnly(false)
+              setPage(1)
+            }}
+          >
+            With words silenced ✕
+          </button>
+        ) : null}
         {author ? (
           <button
             className="small"
