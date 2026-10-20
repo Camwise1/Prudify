@@ -105,6 +105,8 @@ export const api = {
   // A book with no artwork answers with a blank pixel rather than a 404, so
   // scrolling a library does not fill the console with errors.
   coverUrl: (bookId) => `${apiBase()}/books/${encodeURIComponent(bookId)}/cover`,
+  // Played by an <audio> element, which, like <img>, cannot send a header.
+  soundSampleUrl: (params) => `${apiBase()}/settings/sound-sample?${new URLSearchParams(params)}`,
 
   // auth
   authStatus: () => request('/auth/status'),

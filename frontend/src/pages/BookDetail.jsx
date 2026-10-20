@@ -94,9 +94,12 @@ export default function BookDetail({ bookId, onClose, onChanged }) {
           <button
             className="primary"
             disabled={busy}
-            onClick={() => act(() => api.queueBook(book.id), 'Added to the queue')}
+            title="Always works from the original audiobook; any clean copy is replaced"
+            onClick={() =>
+              act(() => api.queueBook(book.id), 'Queued: cleaning from the original audiobook')
+            }
           >
-            Clean now
+            {book.status === 'cleaned' || book.status === 'failed' ? 'Clean again' : 'Clean now'}
           </button>
         </>
       }

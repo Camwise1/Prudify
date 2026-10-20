@@ -890,3 +890,13 @@ class TestHoldingAndSecrets:
             "version", "pending", "queue_finishes_at", "instances_silenced",
             "muted_seconds", "last_finished", "held_reason", "paused_reason",
         }
+
+
+@pytest.mark.skipif(__import__("shutil").which("ffmpeg") is None, reason="needs ffmpeg")
+@pytest.mark.parametrize("mode", ["goat", "beep"])
+def test_the_settings_page_can_play_a_sample(app_client, mode):
+    client, _ = app_client
+    response = client.get(f"/api/v1/settings/sound-sample?mode={mode}&volume=0.2")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/wav"
+    assert response.content[:4] == b"RIFF"

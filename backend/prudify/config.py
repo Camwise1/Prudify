@@ -216,7 +216,8 @@ class FilterSettings(BaseModel):
 
 
 class OutputSettings(BaseModel):
-    mode: Literal["mute", "beep", "cut"] = "mute"
+    # "goat" plays a synthesised goat scream over each hit, where "beep" plays a tone.
+    mode: Literal["mute", "beep", "goat", "cut"] = "mute"
     beep_frequency: int = Field(default=1000, ge=100, le=8000)
     # Fraction of full scale. 0.15 sits comfortably under typical narration.
     beep_volume: float = Field(default=0.15, ge=0.0, le=1.0)

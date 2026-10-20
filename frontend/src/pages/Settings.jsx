@@ -282,6 +282,7 @@ export default function Settings({ settings, onSaved }) {
               >
                 <option value="mute">Silence it (keeps timing)</option>
                 <option value="beep">Beep over it</option>
+                <option value="goat">Screaming goat over it</option>
                 <option value="cut">Cut it out (shortens the book)</option>
               </select>
             </Field>
@@ -304,16 +305,21 @@ export default function Settings({ settings, onSaved }) {
               />
             </Field>
           </div>
-          {draft.output.mode === 'beep' ? (
+          {draft.output.mode === 'beep' || draft.output.mode === 'goat' ? (
             <div className="row">
-              <Field label="Beep frequency (Hz)">
-                <input
-                  type="number"
-                  value={draft.output.beep_frequency}
-                  onChange={(e) => update('output', 'beep_frequency', Number(e.target.value))}
-                />
-              </Field>
-              <Field label="Beep volume (0–1)">
+              {draft.output.mode === 'beep' ? (
+                <Field label="Beep frequency (Hz)">
+                  <input
+                    type="number"
+                    value={draft.output.beep_frequency}
+                    onChange={(e) => update('output', 'beep_frequency', Number(e.target.value))}
+                  />
+                </Field>
+              ) : null}
+              <Field
+                label="Volume (0–1)"
+                hint="A fraction of full scale. Narration usually peaks around 0.3–0.5."
+              >
                 <input
                   type="number"
                   step="0.05"
@@ -322,6 +328,23 @@ export default function Settings({ settings, onSaved }) {
                   value={draft.output.beep_volume}
                   onChange={(e) => update('output', 'beep_volume', Number(e.target.value))}
                 />
+              </Field>
+              <Field label="Hear it">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const sample = new Audio(
+                      api.soundSampleUrl({
+                        mode: draft.output.mode,
+                        volume: draft.output.beep_volume,
+                        frequency: draft.output.beep_frequency,
+                      }),
+                    )
+                    sample.play().catch(() => toast('Could not play the sample', 'error'))
+                  }}
+                >
+                  Play sample
+                </button>
               </Field>
             </div>
           ) : null}

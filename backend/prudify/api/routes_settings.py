@@ -5,9 +5,11 @@ from __future__ import annotations
 import secrets
 from pathlib import Path
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi.responses import Response
 
 from ..config import Config, LibrarySettings, save_config, writable_dir_error
+from ..core import audio as audio_mod
 from ..core import matcher as matcher_mod
 from ..core.transcribe import Word
 from ..db import session_scope
@@ -83,6 +85,32 @@ def update_settings(
         get_queue().settings_changed()
     bus.publish("settings.updated", {"sections": list(data.keys())})
     return _masked(config)
+
+
+@router.get("/settings/sound-sample")
+def sound_sample(
+    mode: str = Query(default="goat", pattern="^(beep|goat)$"),
+    volume: float = Query(default=0.15, ge=0.0, le=1.0),
+    frequency: int = Query(default=1000, ge=100, le=8000),
+    config: Config = Depends(get_config),
+) -> Response:
+    """A second and a half of what a silenced word will sound like."""
+    sounds = config.resolved_work_dir() / "sounds"
+    sounds.mkdir(parents=True, exist_ok=True)
+    if mode == "goat":
+        clip = audio_mod.goat_clip(sounds / "goat-44100.wav", 44100)
+        source = ["-i", str(clip)]
+        shaping = f"volume={volume:.3f}"
+    else:
+        source = ["-f", "lavfi", "-i", f"sine=frequency={frequency}:sample_rate=44100"]
+        shaping = f"volume={volume * audio_mod._SINE_NORMALISE:.3f}"
+    out = sounds / f"sample-{mode}.wav"
+    audio_mod.run_ffmpeg(
+        [audio_mod.ffmpeg_path(), "-hide_banner", "-nostdin", "-y", *source,
+         "-t", "1.5", "-af", f"{shaping},afade=t=out:st=1.4:d=0.1",
+         "-c:a", "pcm_s16le", str(out)]
+    )
+    return Response(content=out.read_bytes(), media_type="audio/wav")
 
 
 @router.post("/settings/regenerate-api-key")
