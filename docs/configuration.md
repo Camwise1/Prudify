@@ -79,7 +79,7 @@ filtering:
   min_confidence: 0.0
 
 output:
-  mode: mute                 # mute | beep | goat | cut
+  mode: mute                 # mute | beep | sound | cut  (sound: upload a clip in Settings → Output)
   beep_frequency: 1000
   beep_volume: 0.15
   container: same            # same | m4b | m4a | mp3 | opus

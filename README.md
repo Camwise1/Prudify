@@ -199,12 +199,14 @@ output rather than publishing a broken file into your clean library.
 | --- | --- | --- | --- |
 | `mute` *(default)* | Audio drops to silence over the word | Unchanged | You want a clean listen with no artefacts |
 | `beep` | A tone plays over the word | Unchanged | You want to know something was removed |
-| `goat` | A (synthesised) goat screams over the word | Unchanged | You want everyone in the car to know something was removed |
+| `sound` | A clip you upload — a screaming goat, say — plays from its start at each word | Unchanged | You want everyone in the car to know something was removed |
 | `cut` | The audio is removed and the gap closed | Shorter | You want no trace at all |
 
 `cut` rebuilds chapter markers to match the new timeline, but playback progress
 saved against the original will no longer line up. `mute` is the safe default.
-Settings → Output has a *Play sample* button for `beep` and `goat`.
+Settings → Output has a *Play sample* button for `beep` and `sound`. A clip is
+trimmed to each word with a quick fade, so its first half-second is what is
+heard; leading silence is cut off when it is uploaded.
 
 Re-cleaning a book always starts from the original audiobook, never from the
 clean copy, and replaces the clean copy when it is done.

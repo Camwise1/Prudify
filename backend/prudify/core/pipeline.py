@@ -430,6 +430,7 @@ def clean_part(
             work_dir=work_dir / "render",
             progress=r_progress,
             cancel=cancel,
+            sound=config.sound_path(),
         )
     except OperationCancelled as exc:
         raise PipelineCancelled("Cancelled by user") from exc

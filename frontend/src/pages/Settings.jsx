@@ -282,7 +282,7 @@ export default function Settings({ settings, onSaved }) {
               >
                 <option value="mute">Silence it (keeps timing)</option>
                 <option value="beep">Beep over it</option>
-                <option value="goat">Screaming goat over it</option>
+                <option value="sound">Play a sound clip over it (a goat, say)</option>
                 <option value="cut">Cut it out (shortens the book)</option>
               </select>
             </Field>
@@ -305,7 +305,8 @@ export default function Settings({ settings, onSaved }) {
               />
             </Field>
           </div>
-          {draft.output.mode === 'beep' || draft.output.mode === 'goat' ? (
+          {draft.output.mode === 'sound' ? <SoundClip /> : null}
+          {draft.output.mode === 'beep' || draft.output.mode === 'sound' ? (
             <div className="row">
               {draft.output.mode === 'beep' ? (
                 <Field label="Beep frequency (Hz)">
@@ -1097,5 +1098,76 @@ function IntegrationsTab({ draft, onChange }) {
         </p>
       </div>
     </>
+  )
+}
+
+function SoundClip() {
+  // The clip is stored on its own, outside the settings draft: it is a file,
+  // and choosing one takes effect at once rather than on "Save changes".
+  const toast = useToast()
+  const [sound, setSound] = useState(undefined)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    api.sound().then((body) => setSound(body.sound)).catch(() => setSound(null))
+  }, [])
+
+  const upload = async (file) => {
+    if (!file) return
+    setBusy(true)
+    try {
+      const body = await api.uploadSound(file)
+      setSound(body.sound)
+      toast('Sound saved', 'success')
+    } catch (err) {
+      toast(err.message, 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="mb">
+      <Field
+        label="Sound clip"
+        hint="Any audio file. It plays from its start at each silenced word, cut off with a quick fade when the word ends, so the first half-second matters most. Leading silence is trimmed for you."
+      >
+        <div className="flex wrap">
+          {sound ? (
+            <span>
+              <b>{sound.name}</b>{' '}
+              <span className="faint">({sound.seconds.toFixed(1)} s)</span>
+            </span>
+          ) : sound === null ? (
+            <span className="faint">None yet. Until there is one, hits are silenced.</span>
+          ) : null}
+          <label className={`btn small${busy ? ' disabled' : ''}`}>
+            {busy ? 'Saving…' : sound ? 'Replace…' : 'Upload…'}
+            <input
+              type="file"
+              accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac"
+              hidden
+              disabled={busy}
+              onChange={(e) => {
+                upload(e.target.files?.[0])
+                e.target.value = ''
+              }}
+            />
+          </label>
+          {sound ? (
+            <button
+              type="button"
+              className="small danger"
+              onClick={async () => {
+                await api.deleteSound()
+                setSound(null)
+              }}
+            >
+              Remove
+            </button>
+          ) : null}
+        </div>
+      </Field>
+    </div>
   )
 }

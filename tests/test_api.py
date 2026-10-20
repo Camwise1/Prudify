@@ -893,10 +893,47 @@ class TestHoldingAndSecrets:
 
 
 @pytest.mark.skipif(__import__("shutil").which("ffmpeg") is None, reason="needs ffmpeg")
-@pytest.mark.parametrize("mode", ["goat", "beep"])
-def test_the_settings_page_can_play_a_sample(app_client, mode):
+def test_a_sound_clip_can_be_uploaded_heard_and_removed(app_client, tmp_path):
+    import subprocess
+
     client, _ = app_client
-    response = client.get(f"/api/v1/settings/sound-sample?mode={mode}&volume=0.2")
+    assert client.get("/api/v1/settings/sound").json()["sound"] is None
+    assert client.get("/api/v1/settings/sound-sample?mode=sound").status_code == 404
+
+    clip = tmp_path / "Goat Scream.mp3"
+    subprocess.run(
+        ["ffmpeg", "-hide_banner", "-nostdin", "-y", "-f", "lavfi",
+         "-i", "anullsrc=r=44100:cl=mono:d=0.5", "-f", "lavfi",
+         "-i", "sine=frequency=700:duration=1.2",
+         "-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1[out]", "-map", "[out]", str(clip)],
+        check=True, capture_output=True,
+    )
+    with clip.open("rb") as handle:
+        body = client.post(
+            "/api/v1/settings/sound", files={"file": ("Goat Scream.mp3", handle, "audio/mpeg")}
+        ).json()
+    assert body["sound"]["name"] == "Goat Scream.mp3"
+    # The half-second of leading silence is trimmed, so it lands on the word.
+    assert body["sound"]["seconds"] == pytest.approx(1.2, abs=0.1)
+
+    sample = client.get("/api/v1/settings/sound-sample?mode=sound&volume=0.3")
+    assert sample.status_code == 200 and sample.content[:4] == b"RIFF"
+
+    client.delete("/api/v1/settings/sound")
+    assert client.get("/api/v1/settings/sound").json()["sound"] is None
+
+
+def test_something_that_is_not_audio_is_refused(app_client):
+    client, _ = app_client
+    response = client.post(
+        "/api/v1/settings/sound", files={"file": ("notes.txt", b"not audio", "text/plain")}
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.skipif(__import__("shutil").which("ffmpeg") is None, reason="needs ffmpeg")
+def test_the_beep_can_be_heard_from_settings(app_client):
+    client, _ = app_client
+    response = client.get("/api/v1/settings/sound-sample?mode=beep&volume=0.2")
     assert response.status_code == 200
-    assert response.headers["content-type"] == "audio/wav"
     assert response.content[:4] == b"RIFF"

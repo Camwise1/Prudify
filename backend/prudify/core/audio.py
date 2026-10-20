@@ -23,14 +23,17 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
+from array import array
 from collections import deque
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+from typing import BinaryIO
 
 from ..config import find_binary
 from .cancel import OperationCancelled
@@ -45,30 +48,13 @@ _INTERVALS_PER_FILTER = 50
 # first means the user-facing `beep_volume` really is a fraction of full scale.
 _SINE_NORMALISE = 8.0
 
-# A screaming goat, synthesised rather than recorded, so no sound file of
-# uncertain licence ships with the package. A harmonic-rich tone around 560 Hz
-# with a fast, wide vibrato is the tremble of a bleat; a slower pulse in
-# loudness, some noise for rasp and two vocal formants do the rest.
-#
-# Every periodic term completes a whole number of cycles in two seconds
-# (560 Hz, 7 Hz vibrato, 3.5 Hz pulse), so the clip loops without a seam and
-# can run under a 30-hour book for the cost of a 2-second render.
-_GOAT_SECONDS = 2.0
-_GOAT_PHASE = "(2*PI*560*t-(560*0.09/7)*cos(2*PI*7*t))"
-# Scaled well under full scale here: the harmonics sum to about 3.5, and a
-# clipped bleat is a square-wave buzz. The clip is peak-normalised afterwards.
-_GOAT_EXPR = (
-    "0.12*(("
-    + "+".join(f"sin({k}*{_GOAT_PHASE})/{k ** 0.7:.4f}" for k in range(1, 8))
-    + ")*(0.55+0.45*abs(sin(2*PI*3.5*t)))+0.12*(random(0)*2-1))"
-)
-_GOAT_SHAPE = (
-    "highpass=f=350,"
-    "equalizer=f=1150:t=q:w=1:g=9,"
-    "equalizer=f=2700:t=q:w=1.4:g=6,"
-    # Rasp, not hiss: keep the noise in the voice's range.
-    "lowpass=f=5000"
-)
+# A sound played over a hit is trimmed to the hit and faded out over this
+# long, so a clip cut short ends in a quick fall rather than a click.
+_SOUND_FADE_SECONDS = 0.02
+# Uploaded clips are cut to this. Only the start of one is ever heard -- the
+# rest of a silenced word is rarely longer than a second -- and a short cap
+# keeps a mis-chosen file from being a 40-minute "sound".
+SOUND_MAX_SECONDS = 10.0
 
 
 class FFmpegError(RuntimeError):
@@ -338,30 +324,31 @@ def build_filter_graph(
     if not intervals:
         return "[0:a]anull[aout]"
 
-    if mode in ("beep", "goat"):
+    if mode == "sound":
+        # Input 1 is the overlay track from sound_feeder(): silence, with the
+        # clip starting exactly at each hit. It is already silent everywhere
+        # else, so unlike the beep it needs no gate of its own.
+        expr = _between_expr(intervals)
+        layout = "mono" if channels == 1 else "stereo"
+        return (
+            f"[1:a]aformat=sample_rates={sample_rate}:channel_layouts={layout},"
+            f"volume={beep_volume:.4f}[fx];"
+            f"[0:a]volume=0:enable='{expr}'[voice];"
+            f"[voice][fx]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]"
+        )
+
+    if mode == "beep":
         expr = _between_expr(intervals)
         layout = "mono" if channels == 1 else "stereo"
         length = f":duration={duration + 1:.3f}" if duration else ""
-        if mode == "goat":
-            # Input 1 is the looping clip from goat_clip(), already at full
-            # scale, so the volume setting means the same as it does for a beep.
-            source = (
-                f"[1:a]aformat=sample_rates={sample_rate}:channel_layouts={layout},"
-                f"volume={beep_volume:.4f}[raw];"
-            )
-        else:
-            source = (
-                f"sine=frequency={beep_frequency}:sample_rate={sample_rate}{length},"
-                f"aformat=sample_rates={sample_rate}:channel_layouts={layout},"
-                f"volume={beep_volume * _SINE_NORMALISE:.4f}[raw];"
-            )
         # normalize=0 keeps amix from halving both inputs. The two streams are
         # gated to be mutually exclusive -- narration is muted exactly where the
-        # sound plays -- so a straight sum cannot clip, and `beep_volume` means
+        # tone plays -- so a straight sum cannot clip, and `beep_volume` means
         # what it says: a fraction of full scale.
         return (
-            source
-            + 
+            f"sine=frequency={beep_frequency}:sample_rate={sample_rate}{length},"
+            f"aformat=sample_rates={sample_rate}:channel_layouts={layout},"
+            f"volume={beep_volume * _SINE_NORMALISE:.4f}[raw];"
             f"[0:a]volume=0:enable='{expr}'[voice];"
             f"[raw]volume=0:enable='not({expr})'[tone];"
             f"[voice][tone]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]"
@@ -504,8 +491,13 @@ def render(
     work_dir: Path | None = None,
     progress: Callable[[float], None] | None = None,
     cancel: Callable[[], bool] | None = None,
+    sound: Path | None = None,
 ) -> Path:
-    """Produce the cleaned file in a single ffmpeg pass."""
+    """Produce the cleaned file in a single ffmpeg pass.
+
+    ``sound`` is the clip for ``mode="sound"``, as prepared by
+    :func:`prepare_sound`. Without one, that mode falls back to muting.
+    """
     destination.parent.mkdir(parents=True, exist_ok=True)
     work_dir = work_dir or Path(tempfile.mkdtemp(prefix="prudify-"))
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -514,6 +506,15 @@ def render(
     out_rate = sample_rate or info.sample_rate or 44100
     chosen_codec = choose_codec(container, info.codec, codec)
     chosen_bitrate = choose_bitrate(info, bitrate)
+
+    feeder = None
+    if mode == "sound":
+        if sound is not None and sound.exists() and intervals:
+            feeder = sound_feeder(decode_pcm(sound, out_rate), intervals, out_rate)
+        else:
+            if intervals:
+                log.warning("No sound clip has been uploaded; muting instead")
+            mode = "mute"
 
     if mode == "cut":
         graph = build_cut_graph(intervals)
@@ -534,15 +535,14 @@ def render(
     copy_cover = preserve_cover and info.has_cover
 
     # ffmpeg quirk: an `amix` graph combined with a stream-copied attached_pic
-    # truncates the output to the length of the still image. Beep and goat
+    # truncates the output to the length of the still image. Beep and sound
     # are the modes that use amix, so they render audio first and attach the
     # cover in a second, stream-copy-only pass.
-    two_pass = mode in ("beep", "goat") and copy_cover
+    two_pass = mode in ("beep", "sound") and copy_cover
 
     cmd = [ffmpeg_path(), "-hide_banner", "-nostdin", "-y", "-i", str(source)]
-    if mode == "goat" and intervals:
-        clip = goat_clip(work_dir / f"goat-{out_rate}.wav", out_rate)
-        cmd += ["-stream_loop", "-1", "-i", str(clip)]
+    if feeder is not None:
+        cmd += ["-f", "s16le", "-ar", str(out_rate), "-ac", "1", "-i", "pipe:0"]
 
     metadata_file: Path | None = None
     if mode == "cut" and preserve_chapters and info.chapters:
@@ -595,6 +595,7 @@ def render(
         total_duration=info.duration,
         cancel=cancel,
         expected_bytes=_expected_output_bytes(info.duration, chosen_bitrate),
+        feed_stdin=feeder,
     )
 
     if two_pass:
@@ -653,37 +654,34 @@ def publish(staged: Path, destination: Path) -> None:
         staged.unlink(missing_ok=True)
 
 
-def goat_clip(path: Path, sample_rate: int = 44100) -> Path:
-    """Render the two-second goat scream loop at ``sample_rate``, once.
+def prepare_sound(source: Path, destination: Path) -> float:
+    """Turn any audio file into the clip played over hits; returns its length.
 
-    Peak-normalised to full scale, so the volume setting is a fraction of
-    full scale just as it is for a beep. Rendered twice as long as needed and
-    trimmed to the second half, so the formant filters have settled and the
-    clip's end meets its start without a click.
+    Mono, 44.1 kHz WAV, cut to SOUND_MAX_SECONDS, with leading silence
+    trimmed -- a clip that starts with a pause would land late on every word --
+    and peak-normalised, so the volume setting is a fraction of full scale as
+    it is for a beep.
     """
-    if path.exists() and path.stat().st_size > 0:
-        return path
-    path.parent.mkdir(parents=True, exist_ok=True)
-    raw = path.with_name(path.stem + "-raw.wav")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    raw = destination.with_name(destination.stem + "-raw.wav")
     run_ffmpeg(
         [
-            ffmpeg_path(), "-hide_banner", "-nostdin", "-y",
-            "-f", "lavfi",
-            "-i", f"aevalsrc=exprs='{_GOAT_EXPR}':s={sample_rate}:d={_GOAT_SECONDS * 2}",
-            "-af", f"{_GOAT_SHAPE},atrim=start={_GOAT_SECONDS},asetpts=N/SR/TB",
-            "-ac", "1", "-c:a", "pcm_s16le", str(raw),
+            ffmpeg_path(), "-hide_banner", "-nostdin", "-y", "-i", str(source),
+            "-vn", "-ac", "1", "-ar", "44100",
+            "-af", "silenceremove=start_periods=1:start_threshold=-45dB,"
+                   f"atrim=duration={SOUND_MAX_SECONDS}",
+            "-c:a", "pcm_s16le", str(raw),
         ]
     )
     peak = _peak_db(raw)
     run_ffmpeg(
         [
             ffmpeg_path(), "-hide_banner", "-nostdin", "-y", "-i", str(raw),
-            "-af", f"volume={-peak - 0.5:.2f}dB",
-            "-c:a", "pcm_s16le", str(path),
+            "-af", f"volume={-peak - 0.5:.2f}dB", "-c:a", "pcm_s16le", str(destination),
         ]
     )
     raw.unlink(missing_ok=True)
-    return path
+    return probe(destination).duration
 
 
 def _peak_db(path: Path) -> float:
@@ -694,6 +692,65 @@ def _peak_db(path: Path) -> float:
     )
     match = re.search(r"max_volume:\s*(-?[\d.]+) dB", result.stderr)
     return float(match.group(1)) if match else 0.0
+
+
+def decode_pcm(path: Path, sample_rate: int) -> bytes:
+    """A short clip as raw mono signed 16-bit little-endian samples."""
+    result = subprocess.run(
+        [ffmpeg_path(), "-hide_banner", "-nostdin", "-i", str(path),
+         "-ac", "1", "-ar", str(sample_rate), "-f", "s16le", "-"],
+        capture_output=True, check=False,
+    )
+    if result.returncode != 0:
+        raise FFmpegError(f"Could not read the sound clip {path.name}")
+    return result.stdout
+
+
+def sound_feeder(
+    clip: bytes, intervals: Sequence[tuple[float, float]], sample_rate: int
+) -> Callable[[BinaryIO], None]:
+    """Write the overlay track: silence, and the clip from its start at each hit.
+
+    Generated here and streamed to ffmpeg rather than built in a filter graph,
+    because the graph has no cheap way to start a sound at hundreds of
+    arbitrary moments: a looping clip gated by the hits plays a random slice
+    of the sound each time -- the middle of a scream rather than its start --
+    and a delayed copy per hit costs a full-length mix each. Positions are
+    counted in samples, so nothing drifts across a 30-hour book.
+    """
+    fade = int(_SOUND_FADE_SECONDS * sample_rate)
+    clip_samples = len(clip) // 2
+    silence = bytes(1 << 20)
+
+    def segment(length: int) -> bytes:
+        if length >= clip_samples:
+            return clip
+        samples = array("h")
+        samples.frombytes(clip[: length * 2])
+        if sys.byteorder == "big":
+            samples.byteswap()
+        ramp = min(fade, length)
+        for i in range(ramp):
+            index = length - ramp + i
+            samples[index] = int(samples[index] * (ramp - i) / ramp)
+        if sys.byteorder == "big":
+            samples.byteswap()
+        return samples.tobytes()
+
+    def feed(out: BinaryIO) -> None:
+        position = 0
+        for start, end in intervals:
+            first = max(position, round(start * sample_rate))
+            gap = (first - position) * 2
+            while gap > 0:
+                chunk = min(gap, len(silence))
+                out.write(silence[:chunk])
+                gap -= chunk
+            length = max(0, round(end * sample_rate) - first)
+            out.write(segment(length))
+            position = first + min(length, clip_samples)
+
+    return feed
 
 
 def _attach_cover(
@@ -798,8 +855,12 @@ def run_ffmpeg(
     total_duration: float = 0.0,
     cancel: Callable[[], bool] | None = None,
     expected_bytes: int = 0,
+    feed_stdin: Callable[[BinaryIO], None] | None = None,
 ) -> None:
     """Run ffmpeg, translating ``-progress`` output into a 0..1 fraction.
+
+    ``feed_stdin``, if given, is called on its own thread with ffmpeg's
+    standard input, for a command that reads ``pipe:0``.
 
     ``out_time`` is the natural source of that fraction, but ffmpeg does not
     always have one to give: with an attached cover picture in the output it
@@ -820,12 +881,29 @@ def run_ffmpeg(
 
     process = subprocess.Popen(
         full_cmd,
+        stdin=subprocess.PIPE if feed_stdin else None,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         bufsize=1,
         creationflags=creationflags,
     )
+
+    if feed_stdin is not None and process.stdin is not None:
+        stdin = process.stdin.buffer
+
+        def _feed() -> None:
+            try:
+                feed_stdin(stdin)
+            except (BrokenPipeError, OSError, ValueError):
+                pass  # ffmpeg stopped reading: cancelled, or it failed
+            finally:
+                try:
+                    stdin.close()
+                except (BrokenPipeError, OSError, ValueError):
+                    pass
+
+        threading.Thread(target=_feed, name="ffmpeg-stdin", daemon=True).start()
 
     # ffmpeg writes progress to stdout and its log to stderr, and it blocks
     # when either pipe's buffer fills. Reading only stdout therefore deadlocks:

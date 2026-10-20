@@ -216,8 +216,11 @@ class FilterSettings(BaseModel):
 
 
 class OutputSettings(BaseModel):
-    # "goat" plays a synthesised goat scream over each hit, where "beep" plays a tone.
-    mode: Literal["mute", "beep", "goat", "cut"] = "mute"
+    # "sound" plays an uploaded clip (a goat, say) from its start at each hit.
+    mode: Literal["mute", "beep", "sound", "cut"] = "mute"
+    # The uploaded clip's original file name, for display; the clip itself
+    # lives at Config.sound_path().
+    sound_name: str = ""
     beep_frequency: int = Field(default=1000, ge=100, le=8000)
     # Fraction of full scale. 0.15 sits comfortably under typical narration.
     beep_volume: float = Field(default=0.15, ge=0.0, le=1.0)
@@ -231,6 +234,12 @@ class OutputSettings(BaseModel):
     preserve_metadata: bool = True
     # Writes a "PRUDIFY_CLEANED" tag so a re-scan can recognise its own output.
     tag_cleaned: bool = True
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _goat_is_a_sound(cls, value: str) -> str:
+        # A synthesised "goat" mode existed briefly; a real recording replaced it.
+        return "sound" if value == "goat" else value
     # Mirror the source's Author/Book folder layout under output_path.
     mirror_structure: bool = True
     overwrite_existing: bool = False
@@ -342,6 +351,9 @@ class Config(BaseModel):
 
     def database_path(self) -> Path:
         return self.resolved_data_dir() / "prudify.db"
+
+    def sound_path(self) -> Path:
+        return self.resolved_data_dir() / "sounds" / "hit.wav"
 
     def transcript_dir(self) -> Path:
         return self.resolved_data_dir() / "transcripts"

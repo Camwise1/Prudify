@@ -396,15 +396,33 @@ class TestChunkCache:
         assert not legacy.exists()
 
 
+def _two_part_clip(path, quiet_seconds=0.15, loud_seconds=0.85):
+    """A clip whose start is quiet and the rest loud, to prove where it begins."""
+    import subprocess
+
+    subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-nostdin", "-y",
+            "-f", "lavfi", "-i", f"sine=frequency=2000:duration={quiet_seconds}",
+            "-f", "lavfi", "-i", f"sine=frequency=2000:duration={loud_seconds}",
+            "-filter_complex",
+            "[0:a]volume=0.4[q];[1:a]volume=8[l];[q][l]concat=n=2:v=0:a=1[out]",
+            "-map", "[out]", str(path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return path
+
+
 @needs_ffmpeg
-def test_goat_mode_screams_over_the_hit_and_keeps_length(prepared, tmp_path):
+def test_sound_mode_starts_the_clip_on_each_word(prepared, tmp_path):
     config, source = prepared
-    config.output.mode = "goat"
-    # Quiet enough to tell apart from the fixture's narration, which peaks far
-    # higher: a level near 0.05 of full scale proves the goat is there and the
-    # narration under it is not.
-    config.output.beep_volume = 0.05
-    destination = tmp_path / "out" / "goat.m4b"
+    config.output.mode = "sound"
+    config.output.beep_volume = 0.5
+    config.filtering.pad_before_ms = 0
+    audio_mod.prepare_sound(_two_part_clip(tmp_path / "clip.wav"), config.sound_path())
+    destination = tmp_path / "out" / "sound.m4b"
     outcome = clean_part(source, destination, config, tmp_path / "work")
 
     assert outcome.ok, outcome.reason
@@ -412,19 +430,46 @@ def test_goat_mode_screams_over_the_hit_and_keeps_length(prepared, tmp_path):
     assert out.duration == pytest.approx(60.0, abs=1.0)
     assert out.chapter_count == 3
     assert out.has_cover
-    narration = peak_db(destination, 5.0, 6.0)
-    goat = peak_db(destination, 10.05, 10.35)
-    assert -32 < goat < -20  # 0.05 of full scale is -26 dB
-    assert narration > goat + 6
+    # The word starts at 10.0: the clip's quiet opening, then its loud body.
+    # A clip looped under the whole book would land at an arbitrary point.
+    opening = peak_db(destination, 10.02, 10.12)
+    body = peak_db(destination, 10.2, 10.35)
+    assert body > -10
+    assert opening < body - 20
 
 
 @needs_ffmpeg
-def test_the_goat_clip_loops_cleanly(tmp_path):
-    clip = audio_mod.goat_clip(tmp_path / "goat.wav", 44100)
-    info = audio_mod.probe(clip)
-    assert info.duration == pytest.approx(2.0, abs=0.01)
-    assert audio_mod._peak_db(clip) == pytest.approx(-0.5, abs=0.3)
-    assert audio_mod.goat_clip(tmp_path / "goat.wav", 44100) == clip  # rendered once
+def test_sound_mode_without_a_clip_mutes(prepared, tmp_path):
+    config, source = prepared
+    config.output.mode = "sound"
+    destination = tmp_path / "out" / "nosound.m4b"
+    assert clean_part(source, destination, config, tmp_path / "work").ok
+    assert peak_db(destination, 10.1, 10.3) < -50
+
+
+def test_the_overlay_puts_the_clip_at_each_hit_to_the_sample():
+    import io
+    from array import array
+
+    clip = array("h", [1000] * 100).tobytes()
+    feed = audio_mod.sound_feeder(clip, [(0.010, 0.020), (0.050, 0.200)], sample_rate=1000)
+    out = io.BytesIO()
+    feed(out)
+    samples = array("h")
+    samples.frombytes(out.getvalue())
+
+    assert list(samples[:10]) == [0] * 10  # silence until the first hit
+    assert samples[10] == 1000  # the clip starts on the hit...
+    assert samples[19] < 1000  # ...and fades as the hit ends
+    assert list(samples[20:50]) == [0] * 30
+    assert list(samples[50:150]) == [1000] * 100  # a longer hit gets the whole clip
+    assert len(samples) == 150
+
+
+def test_an_old_goat_setting_becomes_a_sound():
+    from prudify.config import OutputSettings
+
+    assert OutputSettings(mode="goat").mode == "sound"
 
 
 class TestPublish:
