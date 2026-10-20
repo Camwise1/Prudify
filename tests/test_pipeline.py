@@ -394,3 +394,81 @@ class TestChunkCache:
 
         assert (chunk_cache_dir(config, source) / "chunk-0000.json").exists()
         assert not legacy.exists()
+
+
+@needs_ffmpeg
+def test_goat_mode_screams_over_the_hit_and_keeps_length(prepared, tmp_path):
+    config, source = prepared
+    config.output.mode = "goat"
+    # Quiet enough to tell apart from the fixture's narration, which peaks far
+    # higher: a level near 0.05 of full scale proves the goat is there and the
+    # narration under it is not.
+    config.output.beep_volume = 0.05
+    destination = tmp_path / "out" / "goat.m4b"
+    outcome = clean_part(source, destination, config, tmp_path / "work")
+
+    assert outcome.ok, outcome.reason
+    out = audio_mod.probe(destination)
+    assert out.duration == pytest.approx(60.0, abs=1.0)
+    assert out.chapter_count == 3
+    assert out.has_cover
+    narration = peak_db(destination, 5.0, 6.0)
+    goat = peak_db(destination, 10.05, 10.35)
+    assert -32 < goat < -20  # 0.05 of full scale is -26 dB
+    assert narration > goat + 6
+
+
+@needs_ffmpeg
+def test_the_goat_clip_loops_cleanly(tmp_path):
+    clip = audio_mod.goat_clip(tmp_path / "goat.wav", 44100)
+    info = audio_mod.probe(clip)
+    assert info.duration == pytest.approx(2.0, abs=0.01)
+    assert audio_mod._peak_db(clip) == pytest.approx(-0.5, abs=0.3)
+    assert audio_mod.goat_clip(tmp_path / "goat.wav", 44100) == clip  # rendered once
+
+
+class TestPublish:
+    """Replacing a clean copy that another NAS user wrote."""
+
+    def test_across_filesystems_without_touching_the_old_files_attributes(
+        self, tmp_path, monkeypatch
+    ):
+        import errno
+        import os
+        import shutil
+
+        staged = tmp_path / "scratch" / "render.m4b"
+        staged.parent.mkdir()
+        staged.write_bytes(b"new audio")
+        destination = tmp_path / "share" / "book.m4b"
+        destination.parent.mkdir()
+        destination.write_bytes(b"old audio")
+
+        real_replace = os.replace
+
+        def cross_device(src, dst):
+            if str(src) == str(staged):
+                raise OSError(errno.EXDEV, "Invalid cross-device link")
+            return real_replace(src, dst)
+
+        def not_permitted(*_args, **_kwargs):
+            raise PermissionError(errno.EPERM, "Operation not permitted")
+
+        # On the NAS, changing the old file's mode fails; publishing must not try.
+        monkeypatch.setattr(os, "replace", cross_device)
+        monkeypatch.setattr(os, "chmod", not_permitted)
+        monkeypatch.setattr(shutil, "copystat", not_permitted)
+
+        audio_mod.publish(staged, destination)
+
+        assert destination.read_bytes() == b"new audio"
+        assert not staged.exists()
+        assert [p.name for p in destination.parent.iterdir()] == ["book.m4b"]
+
+    def test_on_the_same_filesystem_it_is_a_rename(self, tmp_path):
+        staged = tmp_path / "render.m4b"
+        staged.write_bytes(b"new")
+        destination = tmp_path / "book.m4b"
+        audio_mod.publish(staged, destination)
+        assert destination.read_bytes() == b"new"
+        assert not staged.exists()

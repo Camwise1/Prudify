@@ -45,6 +45,31 @@ _INTERVALS_PER_FILTER = 50
 # first means the user-facing `beep_volume` really is a fraction of full scale.
 _SINE_NORMALISE = 8.0
 
+# A screaming goat, synthesised rather than recorded, so no sound file of
+# uncertain licence ships with the package. A harmonic-rich tone around 560 Hz
+# with a fast, wide vibrato is the tremble of a bleat; a slower pulse in
+# loudness, some noise for rasp and two vocal formants do the rest.
+#
+# Every periodic term completes a whole number of cycles in two seconds
+# (560 Hz, 7 Hz vibrato, 3.5 Hz pulse), so the clip loops without a seam and
+# can run under a 30-hour book for the cost of a 2-second render.
+_GOAT_SECONDS = 2.0
+_GOAT_PHASE = "(2*PI*560*t-(560*0.09/7)*cos(2*PI*7*t))"
+# Scaled well under full scale here: the harmonics sum to about 3.5, and a
+# clipped bleat is a square-wave buzz. The clip is peak-normalised afterwards.
+_GOAT_EXPR = (
+    "0.12*(("
+    + "+".join(f"sin({k}*{_GOAT_PHASE})/{k ** 0.7:.4f}" for k in range(1, 8))
+    + ")*(0.55+0.45*abs(sin(2*PI*3.5*t)))+0.12*(random(0)*2-1))"
+)
+_GOAT_SHAPE = (
+    "highpass=f=350,"
+    "equalizer=f=1150:t=q:w=1:g=9,"
+    "equalizer=f=2700:t=q:w=1.4:g=6,"
+    # Rasp, not hiss: keep the noise in the voice's range.
+    "lowpass=f=5000"
+)
+
 
 class FFmpegError(RuntimeError):
     """Raised when ffmpeg or ffprobe exits non-zero."""
@@ -313,18 +338,30 @@ def build_filter_graph(
     if not intervals:
         return "[0:a]anull[aout]"
 
-    if mode == "beep":
+    if mode in ("beep", "goat"):
         expr = _between_expr(intervals)
         layout = "mono" if channels == 1 else "stereo"
         length = f":duration={duration + 1:.3f}" if duration else ""
+        if mode == "goat":
+            # Input 1 is the looping clip from goat_clip(), already at full
+            # scale, so the volume setting means the same as it does for a beep.
+            source = (
+                f"[1:a]aformat=sample_rates={sample_rate}:channel_layouts={layout},"
+                f"volume={beep_volume:.4f}[raw];"
+            )
+        else:
+            source = (
+                f"sine=frequency={beep_frequency}:sample_rate={sample_rate}{length},"
+                f"aformat=sample_rates={sample_rate}:channel_layouts={layout},"
+                f"volume={beep_volume * _SINE_NORMALISE:.4f}[raw];"
+            )
         # normalize=0 keeps amix from halving both inputs. The two streams are
         # gated to be mutually exclusive -- narration is muted exactly where the
-        # tone plays -- so a straight sum cannot clip, and `beep_volume` means
+        # sound plays -- so a straight sum cannot clip, and `beep_volume` means
         # what it says: a fraction of full scale.
         return (
-            f"sine=frequency={beep_frequency}:sample_rate={sample_rate}{length},"
-            f"aformat=sample_rates={sample_rate}:channel_layouts={layout},"
-            f"volume={beep_volume * _SINE_NORMALISE:.4f}[raw];"
+            source
+            + 
             f"[0:a]volume=0:enable='{expr}'[voice];"
             f"[raw]volume=0:enable='not({expr})'[tone];"
             f"[voice][tone]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]"
@@ -497,12 +534,15 @@ def render(
     copy_cover = preserve_cover and info.has_cover
 
     # ffmpeg quirk: an `amix` graph combined with a stream-copied attached_pic
-    # truncates the output to the length of the still image. Beep mode is the
-    # only mode that uses amix, so it renders audio first and attaches the
+    # truncates the output to the length of the still image. Beep and goat
+    # are the modes that use amix, so they render audio first and attach the
     # cover in a second, stream-copy-only pass.
-    two_pass = mode == "beep" and copy_cover
+    two_pass = mode in ("beep", "goat") and copy_cover
 
     cmd = [ffmpeg_path(), "-hide_banner", "-nostdin", "-y", "-i", str(source)]
+    if mode == "goat" and intervals:
+        clip = goat_clip(work_dir / f"goat-{out_rate}.wav", out_rate)
+        cmd += ["-stream_loop", "-1", "-i", str(clip)]
 
     metadata_file: Path | None = None
     if mode == "cut" and preserve_chapters and info.chapters:
@@ -582,8 +622,78 @@ def render(
     except OSError:
         staged_bytes = 0
     log.info("Publishing %.2f GB to %s", staged_bytes / (1024**3), destination.parent)
-    shutil.move(str(stage_out), str(destination))
+    publish(stage_out, destination)
     return destination
+
+
+def publish(staged: Path, destination: Path) -> None:
+    """Put a finished file in place of ``destination``, replacing any old one.
+
+    Copied to a temporary name beside the destination and renamed over it,
+    rather than ``shutil.move``. A move across devices -- local scratch to a
+    network share, nearly always -- copies the data and then the old file's
+    permissions and times, and on a NAS that file may belong to another user:
+    everything a Windows machine had written was owned by a different NAS
+    account, so re-cleaning those books copied hours of work into place and
+    then failed with "Operation not permitted" on the chmod. A file Prudify
+    has just created is its own, and replacing one by rename needs only the
+    folder to be writable. Readers never see a half-copied book, either.
+    """
+    temp = destination.with_name(f".{destination.name}.prudify-publish")
+    try:
+        try:
+            os.replace(staged, destination)
+            return
+        except OSError:
+            pass  # a different filesystem: copy across, then rename
+        shutil.copyfile(staged, temp)
+        os.replace(temp, destination)
+    finally:
+        temp.unlink(missing_ok=True)
+        staged.unlink(missing_ok=True)
+
+
+def goat_clip(path: Path, sample_rate: int = 44100) -> Path:
+    """Render the two-second goat scream loop at ``sample_rate``, once.
+
+    Peak-normalised to full scale, so the volume setting is a fraction of
+    full scale just as it is for a beep. Rendered twice as long as needed and
+    trimmed to the second half, so the formant filters have settled and the
+    clip's end meets its start without a click.
+    """
+    if path.exists() and path.stat().st_size > 0:
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    raw = path.with_name(path.stem + "-raw.wav")
+    run_ffmpeg(
+        [
+            ffmpeg_path(), "-hide_banner", "-nostdin", "-y",
+            "-f", "lavfi",
+            "-i", f"aevalsrc=exprs='{_GOAT_EXPR}':s={sample_rate}:d={_GOAT_SECONDS * 2}",
+            "-af", f"{_GOAT_SHAPE},atrim=start={_GOAT_SECONDS},asetpts=N/SR/TB",
+            "-ac", "1", "-c:a", "pcm_s16le", str(raw),
+        ]
+    )
+    peak = _peak_db(raw)
+    run_ffmpeg(
+        [
+            ffmpeg_path(), "-hide_banner", "-nostdin", "-y", "-i", str(raw),
+            "-af", f"volume={-peak - 0.5:.2f}dB",
+            "-c:a", "pcm_s16le", str(path),
+        ]
+    )
+    raw.unlink(missing_ok=True)
+    return path
+
+
+def _peak_db(path: Path) -> float:
+    result = subprocess.run(
+        [ffmpeg_path(), "-hide_banner", "-nostdin", "-i", str(path),
+         "-af", "volumedetect", "-f", "null", "-"],
+        capture_output=True, text=True, check=False,
+    )
+    match = re.search(r"max_volume:\s*(-?[\d.]+) dB", result.stderr)
+    return float(match.group(1)) if match else 0.0
 
 
 def _attach_cover(
