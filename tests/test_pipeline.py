@@ -224,6 +224,28 @@ def test_missing_source_is_reported(config, tmp_path):
     assert "no longer exists" in outcome.reason
 
 
+def test_drm_protected_source_fails_before_transcribing(config, tmp_path, monkeypatch):
+    from prudify.core import pipeline as pipeline_mod
+
+    source = tmp_path / "book.m4b"
+    source.write_bytes(b"audio")
+    monkeypatch.setattr(
+        pipeline_mod.audio_mod,
+        "probe",
+        lambda path: audio_mod.MediaInfo(path=path, duration=1640.0, codec_tag="drms"),
+    )
+
+    def never(*_args, **_kwargs):
+        raise AssertionError("transcription should not start")
+
+    monkeypatch.setattr(pipeline_mod.transcribe_mod, "transcribe_file", never)
+    outcome = clean_part(source, tmp_path / "out/book.m4b", config, tmp_path / "work")
+
+    assert not outcome.ok
+    assert outcome.reason.startswith("DRM-protected (Apple FairPlay)")
+    assert not (tmp_path / "out").exists()
+
+
 class TestDestinationPreflight:
     """An unusable output path must be caught before the CPU is spent.
 

@@ -268,6 +268,14 @@ def clean_part(
     if info.duration <= 0:
         result.reason = "Could not determine duration; file may be corrupt"
         return result
+    if info.drm:
+        # Nothing downstream can decode it, so say why here rather than let
+        # the extract stage fail with the AAC decoder's complaints.
+        result.reason = (
+            f"DRM-protected ({info.drm}); Prudify cannot decode it. "
+            "Replace it with a DRM-free copy."
+        )
+        return result
 
     needed = config.processing.min_free_space_mb
     if needed:

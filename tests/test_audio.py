@@ -163,6 +163,47 @@ class TestProbe:
         with pytest.raises(audio_mod.FFmpegError):
             audio_mod.probe(tmp_path / "nope.m4b")
 
+    def test_ordinary_audio_is_not_drm(self, sample_m4b):
+        info = audio_mod.probe(sample_m4b)
+        assert info.codec_tag == "mp4a"
+        assert info.drm == ""
+
+
+class TestDrmDetection:
+    """FairPlay and friends decode as garbage; the probe must say so."""
+
+    @staticmethod
+    def _probe_with_tag(monkeypatch, tmp_path, tag):
+        import json
+        import subprocess
+
+        payload = {
+            "format": {"format_name": "mov,mp4,m4a", "duration": "1640.1"},
+            "streams": [
+                {"index": 0, "codec_type": "audio", "codec_name": "aac",
+                 "codec_tag_string": tag, "sample_rate": "44100", "channels": 2},
+            ],
+        }
+        monkeypatch.setattr(audio_mod, "ffprobe_path", lambda: "ffprobe")
+        monkeypatch.setattr(
+            audio_mod.subprocess,
+            "run",
+            lambda *a, **k: subprocess.CompletedProcess(a, 0, json.dumps(payload), ""),
+        )
+        return audio_mod.probe(tmp_path / "book.m4b")
+
+    @pytest.mark.parametrize(
+        ("tag", "scheme"),
+        [("drms", "Apple FairPlay"), ("aavd", "Audible"), ("enca", "encrypted MP4")],
+    )
+    def test_protected_tags_are_named(self, monkeypatch, tmp_path, tag, scheme):
+        info = self._probe_with_tag(monkeypatch, tmp_path, tag)
+        assert info.drm == scheme
+        assert info.to_dict()["drm"] == scheme
+
+    def test_plain_aac_is_not_flagged(self, monkeypatch, tmp_path):
+        assert self._probe_with_tag(monkeypatch, tmp_path, "mp4a").drm == ""
+
 
 @needs_ffmpeg
 class TestValidation:

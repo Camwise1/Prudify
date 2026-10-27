@@ -56,6 +56,17 @@ _SOUND_FADE_SECONDS = 0.02
 # keeps a mis-chosen file from being a 40-minute "sound".
 SOUND_MAX_SECONDS = 10.0
 
+# Sample-entry tags ffprobe reports for audio it cannot decrypt. FairPlay
+# (iTunes and Apple Books purchases) is "drms"; Audible's AAX is "aavd"; CENC
+# protected MP4 audio is "enca". ffmpeg reads the container happily and then
+# feeds ciphertext to the AAC decoder, which fails with "Reserved bit set" and
+# "Invalid data found" -- true, but no help to anyone reading the error.
+DRM_CODEC_TAGS = {
+    "drms": "Apple FairPlay",
+    "aavd": "Audible",
+    "enca": "encrypted MP4",
+}
+
 
 class FFmpegError(RuntimeError):
     """Raised when ffmpeg or ffprobe exits non-zero."""
@@ -80,6 +91,7 @@ class MediaInfo:
     duration: float = 0.0
     format_name: str = ""
     codec: str = ""
+    codec_tag: str = ""
     bit_rate: int = 0
     sample_rate: int = 0
     channels: int = 2
@@ -101,12 +113,18 @@ class MediaInfo:
     def chapter_count(self) -> int:
         return len(self.chapters)
 
+    @property
+    def drm(self) -> str:
+        """The DRM scheme protecting the audio, or "" when it is decodable."""
+        return DRM_CODEC_TAGS.get(self.codec_tag.lower(), "")
+
     def to_dict(self) -> dict:
         return {
             "path": str(self.path),
             "duration": self.duration,
             "format_name": self.format_name,
             "codec": self.codec,
+            "drm": self.drm,
             "bit_rate": self.bit_rate,
             "sample_rate": self.sample_rate,
             "channels": self.channels,
@@ -218,6 +236,7 @@ def probe(path: Path | str) -> MediaInfo:
             audio_found = True
             info.audio_stream_index = int(stream.get("index", 0))
             info.codec = stream.get("codec_name", "")
+            info.codec_tag = stream.get("codec_tag_string", "")
             info.sample_rate = int(_safe_float(stream.get("sample_rate")))
             info.channels = int(stream.get("channels") or 2)
             if not info.bit_rate:
