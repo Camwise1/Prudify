@@ -735,6 +735,12 @@ class JobQueue:
             ).scalars().first()
             if job is None:
                 return None
+            # The worker checked these before calling here, but a pause or hold
+            # set since then -- before this job was even queued -- must still
+            # keep it waiting. Checked after the query, a job it sees can only
+            # have been queued after any pause or hold that came first.
+            if self._paused.is_set() or (mode == "clean" and self._held):
+                return None
             job.status = JobStatus.RUNNING.value
             job.started_at = _utcnow()
             job.message = "Starting"

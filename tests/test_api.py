@@ -860,6 +860,25 @@ class TestHoldingAndSecrets:
         assert [job["id"] for job in state["pending"]] == [job_id]
         assert state["active"] == []
 
+    def test_a_worker_already_past_the_hold_check_does_not_claim(
+        self, app_client, monkeypatch
+    ):
+        # A worker can check the hold, stall, and only then ask for a job that
+        # was queued after the hold began. The claim itself must refuse it.
+        from prudify.services.queue import get_queue
+
+        client, _ = app_client
+        client.post("/api/v1/books/scan")
+        book_id = client.get("/api/v1/books").json()["items"][0]["id"]
+        queue = get_queue()
+        _hold(monkeypatch, queue, "Plex is playing (1 stream)")
+        job_id = client.post(f"/api/v1/books/{book_id}/queue").json()["job_id"]
+
+        assert queue._claim("clean") is None
+        queue._paused.clear()
+        assert queue._claim("clean") is None
+        assert [job["id"] for job in client.get("/api/v1/queue").json()["pending"]] == [job_id]
+
     def test_a_book_held_mid_transcription_keeps_its_place(self, app_client, monkeypatch):
         import time
 
