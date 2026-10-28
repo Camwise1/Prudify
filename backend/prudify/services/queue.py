@@ -957,6 +957,7 @@ class JobQueue:
                         overwrite=self.config.output.overwrite_existing,
                         progress=progress,
                         cancel=cancel,
+                        link=self.config.output.link_unchanged,
                     )
                 else:
                     result = clean_part(

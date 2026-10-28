@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import shutil
 import time
 from collections.abc import Callable
@@ -158,19 +159,49 @@ def stage_fraction(stage: str, overall: float) -> float:
 _COPY_BLOCK = 8 * 1024 * 1024
 
 
+def link_into_place(source: Path, destination: Path) -> bool:
+    """Hard-link ``source`` in at ``destination``, replacing any old file.
+
+    An unchanged book is the same bytes as its source, and a second copy of a
+    multi-gigabyte audiobook on the NAS buys nothing. A hard link costs no
+    space and reads identically. Returns False -- leaving nothing behind --
+    where linking is not possible: a clean library on another filesystem or
+    share, or a filesystem without hard links, and the caller copies instead.
+
+    Linked to a temporary name and renamed over the destination, so a
+    re-clean that later writes real output replaces the name, never the
+    shared file the source is still using.
+    """
+    temp = destination.with_name(f".{destination.name}.prudify-link")
+    try:
+        temp.unlink(missing_ok=True)
+        os.link(source, temp)
+        os.replace(temp, destination)
+        return True
+    except OSError as exc:
+        log.info("Could not hard-link %s (%s); copying instead", destination.name, exc)
+        return False
+    finally:
+        # Also covers renaming onto a name that was already this same file,
+        # which POSIX defines as doing nothing and leaves both names.
+        temp.unlink(missing_ok=True)
+
+
 def pass_through_part(
     source: Path,
     destination: Path,
     overwrite: bool = False,
     progress: ProgressFn | None = None,
     cancel: Callable[[], bool] | None = None,
+    link: bool = False,
 ) -> PartResult:
     """Copy a part into the clean library unchanged, for a book known to be clean.
 
     No transcription and no re-encode: the output is byte-identical to the
-    source. The copy is staged beside the destination and renamed into place,
-    so a cancelled or interrupted copy never leaves a truncated file where a
-    media server would pick it up as a finished book.
+    source. With ``link`` it is hard-linked when the filesystem allows, so it
+    takes no extra space. Otherwise the copy is staged beside the destination
+    and renamed into place, so a cancelled or interrupted copy never leaves a
+    truncated file where a media server would pick it up as a finished book.
     """
     started = time.monotonic()
     result = PartResult(source=source, destination=destination)
@@ -186,6 +217,14 @@ def pass_through_part(
     problem = writable_dir_error(destination.parent)
     if problem:
         result.reason = problem
+        return result
+
+    if cancel and cancel():
+        raise PipelineCancelled("Cancelled by user")
+    if link and link_into_place(source, destination):
+        result.ok = True
+        result.reason = "Marked clean; linked to the original"
+        result.elapsed_seconds = time.monotonic() - started
         return result
 
     total = max(1, source.stat().st_size)
@@ -394,9 +433,12 @@ def clean_part(
 
     if not report_data.matches and config.output.copy_when_clean:
         report("rendering", 0.5, "No matches; copying original")
-        shutil.copy2(source, destination)
+        if config.output.link_unchanged and link_into_place(source, destination):
+            result.reason = "No profanity found; linked to the original"
+        else:
+            shutil.copy2(source, destination)
+            result.reason = "No profanity found; copied unchanged"
         result.ok = True
-        result.reason = "No profanity found; copied unchanged"
         result.output_duration = info.duration
         result.elapsed_seconds = time.monotonic() - started
         report("publishing", 1.0, "Done")

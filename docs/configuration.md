@@ -90,6 +90,7 @@ output:
   preserve_metadata: true
   tag_cleaned: true
   copy_when_clean: true
+  link_unchanged: true
   overwrite_existing: false
 
 processing:

@@ -379,6 +379,12 @@ export default function Settings({ settings, onSaved }) {
             onChange={(value) => update('output', 'copy_when_clean', value)}
           />
           <Check
+            label="Hard-link unchanged books instead of copying"
+            hint="An unchanged book takes no extra space when the clean library is on the same share as the source. Falls back to copying otherwise."
+            checked={draft.output.link_unchanged}
+            onChange={(value) => update('output', 'link_unchanged', value)}
+          />
+          <Check
             label="Tag output as cleaned by Prudify"
             checked={draft.output.tag_cleaned}
             onChange={(value) => update('output', 'tag_cleaned', value)}

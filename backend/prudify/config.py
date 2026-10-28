@@ -246,6 +246,10 @@ class OutputSettings(BaseModel):
     # When a book turns out to contain nothing to silence, copy it across
     # unchanged so the clean library stays a complete mirror of the source.
     copy_when_clean: bool = True
+    # Hard-link those unchanged files instead of copying them, when the clean
+    # library is on the same filesystem as the source: an identical book then
+    # takes no extra space. Falls back to a copy where linking is not possible.
+    link_unchanged: bool = True
 
 
 class ProcessingSettings(BaseModel):

@@ -162,6 +162,29 @@ def test_clean_book_is_copied_across(config, sample_m4b, tmp_path):
 
 
 @needs_ffmpeg
+def test_clean_book_is_linked_not_duplicated(config, sample_m4b, tmp_path):
+    """An unchanged book is the original; it should not take the space twice."""
+    seed_transcript(config, sample_m4b, hits=())
+    destination = tmp_path / "out" / "clean.m4b"
+    outcome = clean_part(sample_m4b, destination, config, tmp_path / "work")
+
+    assert outcome.ok
+    assert "linked" in outcome.reason
+    assert destination.samefile(sample_m4b)
+
+
+@needs_ffmpeg
+def test_clean_book_is_copied_when_linking_is_off(config, sample_m4b, tmp_path):
+    config.output.link_unchanged = False
+    seed_transcript(config, sample_m4b, hits=())
+    destination = tmp_path / "out" / "clean.m4b"
+    outcome = clean_part(sample_m4b, destination, config, tmp_path / "work")
+
+    assert outcome.ok
+    assert not destination.samefile(sample_m4b)
+
+
+@needs_ffmpeg
 def test_transcript_cache_is_reused(prepared, tmp_path):
     """Changing filter settings must not trigger a second transcription."""
     config, source = prepared
@@ -342,6 +365,50 @@ class TestPassThrough:
         assert destination.read_bytes() == b"old"
         assert pass_through_part(source, destination, overwrite=True).ok
         assert destination.read_bytes() == b"new"
+
+    def test_links_instead_of_copying(self, tmp_path):
+        source = tmp_path / "in.m4b"
+        source.write_bytes(b"x" * 1024)
+        destination = tmp_path / "out/Book/in.m4b"
+        destination.parent.mkdir(parents=True)
+
+        result = pass_through_part(source, destination, link=True)
+
+        assert result.ok
+        assert "linked" in result.reason
+        assert destination.samefile(source)
+        assert not list(destination.parent.glob(".*"))
+
+    def test_relinking_over_an_existing_output(self, tmp_path):
+        source = tmp_path / "in.m4b"
+        source.write_bytes(b"new")
+        destination = tmp_path / "out.m4b"
+        destination.write_bytes(b"old")
+
+        assert pass_through_part(source, destination, overwrite=True, link=True).ok
+        assert destination.samefile(source)
+        # Linking again onto the same file is a no-op that leaves no temp name.
+        assert pass_through_part(source, destination, overwrite=True, link=True).ok
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["in.m4b", "out.m4b"]
+
+    def test_copies_when_linking_is_not_possible(self, tmp_path, monkeypatch):
+        import os
+
+        def cross_device(*_args):
+            raise OSError(18, "Invalid cross-device link")
+
+        monkeypatch.setattr(os, "link", cross_device)
+        source = tmp_path / "in.m4b"
+        source.write_bytes(b"x" * 1024)
+        destination = tmp_path / "out.m4b"
+
+        result = pass_through_part(source, destination, link=True)
+
+        assert result.ok
+        assert "copied" in result.reason
+        assert destination.read_bytes() == source.read_bytes()
+        assert not destination.samefile(source)
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["in.m4b", "out.m4b"]
 
     def test_cancelling_leaves_nothing_behind(self, tmp_path):
         source = tmp_path / "in.m4b"
