@@ -33,6 +33,10 @@ from .queue import get_queue
 
 log = logging.getLogger(__name__)
 
+# How long setting up the watch may take before the log says why nothing is
+# being noticed. A healthy local or NAS library takes well under a second.
+WATCH_SETUP_WARN_SECONDS = 30
+
 
 class _AudioEventHandler(FileSystemEventHandler):
     def __init__(self, library_id: str, on_change) -> None:
@@ -71,35 +75,76 @@ class LibraryWatcher:
     # -- lifecycle --------------------------------------------------------
 
     def start(self) -> None:
-        observer_cls = PollingObserver if self.use_polling else Observer
-        self._observer = observer_cls()
-        watched = 0
-        for lib in self.config.libraries:
-            if not lib.enabled:
-                continue
-            root = Path(lib.source_path).expanduser()
-            if not root.is_dir():
-                log.warning("Watcher: %s does not exist, skipping", root)
-                continue
-            handler = _AudioEventHandler(lib.id, self._note_change)
-            try:
-                self._observer.schedule(handler, str(root), recursive=True)
-                watched += 1
-            except OSError as exc:
-                log.warning("Could not watch %s: %s", root, exc)
-        if watched:
-            self._observer.start()
-        log.info("Watching %d librar%s", watched, "y" if watched == 1 else "ies")
+        """Start watching without waiting for the watch to be set up.
 
+        Setting up the watch walks every library: the polling observer
+        snapshots the whole tree before it returns, and even ``is_dir()`` on a
+        stalled NFS mount can block for minutes. Done inline, that kept the
+        web server from ever starting, so a hung share looked like a dead
+        Prudify instead of a NAS problem it could report.
+        """
         self._thread = threading.Thread(target=self._loop, name="prudify-watcher", daemon=True)
         self._thread.start()
+        threading.Thread(
+            target=self._start_observer, name="prudify-watch-setup", daemon=True
+        ).start()
+
+    def _start_observer(self) -> None:
+        slow = threading.Timer(
+            WATCH_SETUP_WARN_SECONDS,
+            log.warning,
+            args=(
+                "Still setting up the folder watcher after %ds; a library share "
+                "may not be responding",
+                WATCH_SETUP_WARN_SECONDS,
+            ),
+        )
+        slow.daemon = True
+        slow.start()
+        try:
+            observer_cls = PollingObserver if self.use_polling else Observer
+            observer = observer_cls()
+            watched = 0
+            for lib in self.config.libraries:
+                if self._stop.is_set():
+                    return
+                if not lib.enabled:
+                    continue
+                root = Path(lib.source_path).expanduser()
+                if not root.is_dir():
+                    log.warning("Watcher: %s does not exist, skipping", root)
+                    continue
+                handler = _AudioEventHandler(lib.id, self._note_change)
+                try:
+                    observer.schedule(handler, str(root), recursive=True)
+                    watched += 1
+                except OSError as exc:
+                    log.warning("Could not watch %s: %s", root, exc)
+            if watched:
+                with self._lock:
+                    if self._stop.is_set():
+                        return
+                    self._observer = observer
+                observer.start()
+                # stop() may have run while the snapshot was being taken, and
+                # stopping an observer that had not started yet does nothing.
+                if self._stop.is_set():
+                    observer.stop()
+                    return
+            log.info("Watching %d librar%s", watched, "y" if watched == 1 else "ies")
+        except Exception:  # noqa: BLE001 - a background thread must not die
+            log.exception("Could not start the folder watcher")
+        finally:
+            slow.cancel()
 
     def stop(self) -> None:
         self._stop.set()
-        if self._observer is not None:
-            self._observer.stop()
+        with self._lock:
+            observer = self._observer
+        if observer is not None:
+            observer.stop()
             try:
-                self._observer.join(timeout=5)
+                observer.join(timeout=5)
             except RuntimeError:
                 pass
         if self._thread is not None:
