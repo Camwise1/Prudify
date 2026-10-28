@@ -801,6 +801,16 @@ def test_the_book_list_can_show_only_books_with_words_silenced(app_client):
     assert page["items"][0]["match_count"] == 3
 
 
+def _hold(monkeypatch, queue, reason: str) -> None:
+    """Hold the queue the way the schedule or Plex would.
+
+    Setting ``_held`` alone does not last: the heartbeat asks the hold check
+    again every few seconds and, finding nothing to hold for, lets work run.
+    """
+    monkeypatch.setattr(queue._hold, "reason", lambda: reason)
+    queue._held = reason
+
+
 class TestHoldingAndSecrets:
     def test_tokens_are_never_sent_back_and_survive_a_save(self, app_client):
         client, config = app_client
@@ -815,7 +825,7 @@ class TestHoldingAndSecrets:
         client.put("/api/v1/settings", json={"integrations": {"plex": sent}})
         assert config.integrations.plex.token == "secret"
 
-    def test_a_held_queue_still_copies(self, app_client, tmp_path):
+    def test_a_held_queue_still_copies(self, app_client, tmp_path, monkeypatch):
         import time
 
         from prudify.services.queue import get_queue
@@ -823,8 +833,7 @@ class TestHoldingAndSecrets:
         client, _ = app_client
         client.post("/api/v1/books/scan")
         book_id = client.get("/api/v1/books").json()["items"][0]["id"]
-        queue = get_queue()
-        queue._held = "Outside processing hours (23:00–07:00)"
+        _hold(monkeypatch, get_queue(), "Outside processing hours (23:00–07:00)")
 
         client.post(f"/api/v1/books/{book_id}/mark-clean")
         client.post("/api/v1/queue/resume")
@@ -835,7 +844,7 @@ class TestHoldingAndSecrets:
         assert (tmp_path / "clean/Author/Book/Book.m4b").exists()
         assert client.get("/api/v1/queue").json()["held_reason"].startswith("Outside")
 
-    def test_a_held_queue_does_not_start_transcribing(self, app_client):
+    def test_a_held_queue_does_not_start_transcribing(self, app_client, monkeypatch):
         import time
 
         from prudify.services.queue import get_queue
@@ -843,7 +852,7 @@ class TestHoldingAndSecrets:
         client, _ = app_client
         client.post("/api/v1/books/scan")
         book_id = client.get("/api/v1/books").json()["items"][0]["id"]
-        get_queue()._held = "Plex is playing (1 stream)"
+        _hold(monkeypatch, get_queue(), "Plex is playing (1 stream)")
         job_id = client.post(f"/api/v1/books/{book_id}/queue").json()["job_id"]
         client.post("/api/v1/queue/resume")
         time.sleep(0.5)
